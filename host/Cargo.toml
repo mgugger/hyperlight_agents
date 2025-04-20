@@ -1,0 +1,17 @@
+[package]
+name = "hyperlight_agents_host"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hyperlight-host = { git = "https://github.com/hyperlight-dev/hyperlight.git", features = [
+    "kvm",
+] }
+hyperlight-common = { git = "https://github.com/hyperlight-dev/hyperlight.git", default-features = false }
+
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+
+[build-dependencies]
+anyhow = { version = "1.0" }
+cfg_aliases = "0.2.1"
+built = { version = "0.7.7", features = ["chrono", "git2"] }

@@ -1,0 +1,10 @@
+[package]
+name = "hyperlight_agents_guest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hyperlight-guest = { git = "https://github.com/hyperlight-dev/hyperlight.git" }
+hyperlight-common = { git = "https://github.com/hyperlight-dev/hyperlight.git", default-features = false }
+
+regex = { version = "1.11.1", default-features = false }
