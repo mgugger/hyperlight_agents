@@ -1,5 +1,5 @@
 [package]
-name = "hyperlight_agents_host"
+name = "hyperlight-agents-host"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,7 +8,7 @@ hyperlight-host = { git = "https://github.com/hyperlight-dev/hyperlight.git", fe
     "kvm",
 ] }
 hyperlight-common = { git = "https://github.com/hyperlight-dev/hyperlight.git", default-features = false }
-
+hyperlight-agents-common = { path = "./../hyperlight_agents_common", version = "0.1.0" }
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 
 [build-dependencies]

@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 
 use hyperlight_common::flatbuffer_wrappers::function_types::{ParameterValue, ReturnType};
-use hyperlight_host::func::HostFunction2;
+use hyperlight_host::func::{HostFunction2, ReturnValue};
 use hyperlight_host::sandbox::SandboxConfiguration;
 use hyperlight_host::sandbox_state::sandbox::EvolvableSandbox;
 use hyperlight_host::sandbox_state::transition::Noop;
@@ -11,13 +11,17 @@ use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
 
 mod host_functions;
 use host_functions::network_functions::http_request;
+use hyperlight_agents_common::constants;
 use reqwest::blocking::Client;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 struct Agent {
     id: String,
+    name: String,
+    description: String,
     sandbox: MultiUseSandbox,
-    rx: Receiver<(String, String)>, // (response, callback_name)
+    tx: Sender<(Option<String>, String)>,
+    rx: Receiver<(Option<String>, String)>, // (response, callback_name)
 }
 
 fn main() -> hyperlight_host::Result<()> {
@@ -28,35 +32,51 @@ fn main() -> hyperlight_host::Result<()> {
             .unwrap(),
     );
 
-    // Create agents
-    let agent_ids = vec!["TopHNLinksAgent"];
+    let agent_ids: Vec<String> = std::fs::read_dir("./../guest/target/x86_64-unknown-none/debug/")
+        .expect("Failed to read directory")
+        .filter_map(|entry| {
+            entry.ok().and_then(|e| {
+                let path = e.path();
+                if path.is_file()
+                    && !path.to_string_lossy().ends_with(".d")
+                    && !path.to_string_lossy().ends_with(".cargo-lock")
+                {
+                    Some(path.to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
     let mut agents = Vec::new();
 
     for agent_id in agent_ids {
-        let agent = create_agent(agent_id.to_string(), http_client.clone())?;
+        let agent = create_agent(
+            agent_id.to_string(),
+            http_client.clone(),
+            agent_id.to_string(),
+        )?;
         agents.push(agent);
+    }
+
+    // senders
+    let mut tx_senders = Vec::new();
+    for agent in &agents {
+        tx_senders.push((agent.id.clone(), agent.tx.clone()));
     }
 
     // Start agent tasks in separate threads
     let mut handles = Vec::new();
     for mut agent in agents {
         let handle = thread::spawn(move || {
-            // Initialize agent with its specific task
-            let result = agent.sandbox.call_guest_function_by_name(
-                "TopHNLinks", // or any other entry function
-                ReturnType::String,
-                Some(vec![]),
-            );
-
-            if let Err(e) = result {
-                eprintln!("Failed to initialize agent {}: {:?}", agent.id, e);
-                return;
-            }
-
-            // Agent event loop
             run_agent_event_loop(&mut agent);
         });
         handles.push(handle);
+    }
+
+    if let Some((id, tx)) = tx_senders.first() {
+        tx.send((None, "TopHNLinks".to_string()))
+            .expect(&format!("Failed to send message to agent {}", id));
     }
 
     // Wait for all agents to complete
@@ -67,9 +87,13 @@ fn main() -> hyperlight_host::Result<()> {
     Ok(())
 }
 
-fn create_agent(agent_id: String, http_client: Arc<Client>) -> hyperlight_host::Result<Agent> {
+fn create_agent(
+    agent_id: String,
+    http_client: Arc<Client>,
+    binary_path: String,
+) -> hyperlight_host::Result<Agent> {
     // Create a channel for communication
-    let (tx, rx) = channel::<(String, String)>();
+    let (tx, rx) = channel::<(Option<String>, String)>();
 
     // Create sandbox configuration
     let mut sandbox_config = SandboxConfiguration::default();
@@ -78,29 +102,59 @@ fn create_agent(agent_id: String, http_client: Arc<Client>) -> hyperlight_host::
     sandbox_config.set_heap_size(100 * 1024 * 1024);
 
     // Create a sandbox for this agent
-    let guest_instance = hyperlight_host::GuestBinary::FilePath(
-        "./../guest/target/x86_64-unknown-none/debug/hyperlight_agents_guest".to_string(),
-    );
+    let guest_instance = hyperlight_host::GuestBinary::FilePath(binary_path);
 
     let mut uninitialized_sandbox =
         UninitializedSandbox::new(guest_instance, Some(sandbox_config), None, None)?;
 
     // Register host functions specific to this agent
-    register_host_functions(&mut uninitialized_sandbox, tx, http_client, &agent_id)?;
+    register_host_functions(
+        &mut uninitialized_sandbox,
+        tx.clone(),
+        http_client,
+        &agent_id,
+    )?;
 
     // Initialize the sandbox
-    let sandbox = uninitialized_sandbox.evolve(Noop::default())?;
+    let mut sandbox = uninitialized_sandbox.evolve(Noop::default())?;
+
+    let name = match sandbox
+        .call_guest_function_by_name(
+            constants::GuestMethod::GetTitle.as_ref(),
+            ReturnType::String,
+            Some(vec![ParameterValue::String("".to_string())]),
+        )
+        .unwrap()
+    {
+        ReturnValue::String(s) => s,
+        _ => panic!("Expected a string return value"),
+    };
+
+    let description = match sandbox
+        .call_guest_function_by_name(
+            constants::GuestMethod::GetDescription.as_ref(),
+            ReturnType::String,
+            Some(vec![ParameterValue::String("".to_string())]),
+        )
+        .unwrap()
+    {
+        ReturnValue::String(s) => s,
+        _ => panic!("Expected a string return value"),
+    };
 
     Ok(Agent {
         id: agent_id,
+        name,
+        description,
         sandbox,
+        tx,
         rx,
     })
 }
 
 fn register_host_functions(
     sandbox: &mut UninitializedSandbox,
-    tx: Sender<(String, String)>,
+    tx: Sender<(Option<String>, String)>,
     http_client: Arc<Client>,
     agent_id: &str,
 ) -> hyperlight_host::Result<()> {
@@ -116,7 +170,7 @@ fn register_host_functions(
                 Err(e) => format!("HTTP request failed: {}", e),
             };
 
-            if let Err(e) = sender.send((response, callback_name)) {
+            if let Err(e) = sender.send((Some(response), callback_name)) {
                 eprintln!("Failed to send response: {:?}", e);
             }
         });
@@ -125,7 +179,11 @@ fn register_host_functions(
     }));
 
     let all_syscalls: Vec<i64> = (0..=500).collect();
-    http_get_fn.register_with_extra_allowed_syscalls(sandbox, "HttpGet", all_syscalls)?;
+    http_get_fn.register_with_extra_allowed_syscalls(
+        sandbox,
+        constants::HostMethod::FetchData.as_ref(),
+        all_syscalls,
+    )?;
 
     // Final answer function
     let agent_id_clone = agent_id.to_string();
@@ -133,7 +191,7 @@ fn register_host_functions(
         println!("Agent {}: Final answer: {}", agent_id_clone, answer);
         Ok(())
     }));
-    print_final_answer_fn.register(sandbox, "FinalAnswerHostMethod")?;
+    print_final_answer_fn.register(sandbox, constants::HostMethod::FinalAnswer.as_ref())?;
 
     Ok(())
 }
@@ -141,12 +199,19 @@ fn register_host_functions(
 fn run_agent_event_loop(agent: &mut Agent) {
     loop {
         match agent.rx.try_recv() {
-            Ok((response, callback_name)) => {
-                let callback_result = agent.sandbox.call_guest_function_by_name(
-                    &callback_name,
-                    ReturnType::String,
-                    Some(vec![ParameterValue::String(response)]),
-                );
+            Ok((content, callback_name)) => {
+                let callback_result = match content {
+                    Some(content) => agent.sandbox.call_guest_function_by_name(
+                        &callback_name,
+                        ReturnType::String,
+                        Some(vec![ParameterValue::String(content)]),
+                    ),
+                    None => agent.sandbox.call_guest_function_by_name(
+                        &callback_name,
+                        ReturnType::String,
+                        Some(vec![]),
+                    ),
+                };
 
                 match callback_result {
                     Ok(result) => {
