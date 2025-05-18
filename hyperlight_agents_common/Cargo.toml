@@ -1,13 +1,9 @@
 [package]
-name = "hyperlight-agents-guest"
+name = "hyperlight-agents-common"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hyperlight-guest = { git = "https://github.com/hyperlight-dev/hyperlight.git" }
 hyperlight-common = { git = "https://github.com/hyperlight-dev/hyperlight.git", default-features = false }
-hyperlight-agents-common = { path = "./../hyperlight_agents_common", version = "0.1.0" }
-
-regex = { version = "1.11.1", default-features = false }
 strum = { version = "0.27", default-features = false, features = ["derive"] }
 strum_macros = "0.27"

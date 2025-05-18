@@ -1,0 +1,34 @@
+# Exclude build artifacts and target directories
+**/target/
+target/
+
+# VSCode related files
+.vscode/
+
+# Common editor files
+*.swp
+*.swo
+*~
+.idea/
+*.iml
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Rust specific
+**/*.rs.bk
+Cargo.lock
+# Keep Cargo.lock in library projects
+
+# Debug artifacts
+**/debug/
+**/release/
+
+# Specific project paths
+/guest/target/
+/host/target/
+/hyperlight_agents_common/target/
+
+# Dependencies
+**/.cargo/

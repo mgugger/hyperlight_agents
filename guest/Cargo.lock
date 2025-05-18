@@ -67,6 +67,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hyperlight-agents-common"
+version = "0.1.0"
+dependencies = [
+ "hyperlight-common",
+ "strum",
+ "strum_macros",
+]
+
+[[package]]
+name = "hyperlight-agents-guest"
+version = "0.1.0"
+dependencies = [
+ "hyperlight-agents-common",
+ "hyperlight-common",
+ "hyperlight-guest",
+ "regex",
+ "strum",
+ "strum_macros",
+]
+
+[[package]]
 name = "hyperlight-common"
 version = "0.3.0"
 source = "git+https://github.com/hyperlight-dev/hyperlight.git#34eb326e7131c2ae546508e5ba7e5437c7d2666d"
@@ -91,15 +112,6 @@ dependencies = [
  "log",
  "serde_json",
  "spin 0.10.0",
-]
-
-[[package]]
-name = "hyperlight_agents_guest"
-version = "0.1.0"
-dependencies = [
- "hyperlight-common",
- "hyperlight-guest",
- "regex",
 ]
 
 [[package]]
