@@ -1,6 +1,4 @@
-use std::io::Error;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Duration;
 
 use hyperlight_common::flatbuffer_wrappers::function_types::{ParameterValue, ReturnType};
@@ -11,9 +9,9 @@ use hyperlight_host::sandbox_state::transition::Noop;
 use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
 
 use crate::host_functions::network_functions::http_request;
-use crate::mcp_server::MCP_RESPONSE_CHANNELS;
+use crate::mcp_server::{MCP_AGENT_REQUEST_IDS, MCP_RESPONSE_CHANNELS};
 use hyperlight_agents_common::constants;
-use reqwest::blocking::Client;
+use reqwest::Client;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use hyperlight_agents_common::traits::agent::Param;
@@ -166,6 +164,9 @@ pub fn create_agent(
                     param_type: hyperlight_agents_common::traits::agent::ParamType::String,
                     required,
                 });
+                for param in &params {
+                    println!("Added parameter: {:?}", param);
+                }
             }
         }
     }
@@ -194,11 +195,16 @@ pub fn register_host_functions(
         let client = http_client.clone();
         let sender = tx_clone.clone();
 
-        thread::spawn(move || {
-            let response = match http_request(client, &url, "GET", None, None) {
-                Ok(resp) => resp,
-                Err(e) => format!("HTTP request failed: {}", e),
-            };
+        // Create a new thread with a runtime for the HTTP request
+        std::thread::spawn(move || {
+            // Create a runtime for this thread
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let response = rt.block_on(async {
+                match http_request(client, &url, "GET", None, None).await {
+                    Ok(resp) => resp,
+                    Err(e) => format!("HTTP request failed: {}", e),
+                }
+            });
 
             if let Err(e) = sender.send((Some(response), callback_name)) {
                 eprintln!("Failed to send response: {:?}", e);
@@ -229,7 +235,7 @@ pub fn register_host_functions(
 
         // Look up the request ID for this agent
         let request_id = {
-            if let Ok(request_ids) = crate::mcp_server::MCP_AGENT_REQUEST_IDS.lock() {
+            if let Ok(request_ids) = MCP_AGENT_REQUEST_IDS.lock() {
                 println!("DEBUG: FULL request map: {:?}", *request_ids);
                 println!(
                     "Available agent IDs in request map: {:?}",
@@ -259,19 +265,16 @@ pub fn register_host_functions(
             );
 
             // Send the answer back through the MCP response channel
-            if let Ok(channels) = crate::mcp_server::MCP_RESPONSE_CHANNELS.lock() {
-                if let Some(tx) = channels.get(&request_id) {
+            if let Ok(mut channels) = MCP_RESPONSE_CHANNELS.lock() {
+                if let Some(tx) = channels.remove(&request_id) {
                     println!("Sending final result to MCP for request {}", request_id);
-                    // Use clone to avoid borrowing issues
-                    let tx_clone = tx.clone();
 
-                    match tx_clone.send(answer_copy) {
+                    match tx.send(answer_copy) {
                         Ok(_) => {
                             println!(
                                 "Successfully sent final result to MCP for request {}",
                                 request_id
                             );
-
                             // Don't remove the request ID here - let the MCP server handle cleanup
                             // when it receives the response
                         }
@@ -374,14 +377,14 @@ pub fn run_agent_event_loop(agent: &mut Agent) {
                 println!("Agent {} channel disconnected", agent.id);
 
                 // Clean up any request IDs when the agent disconnects
-                if let Ok(mut request_ids) = crate::mcp_server::MCP_AGENT_REQUEST_IDS.lock() {
+                if let Ok(mut request_ids) = MCP_AGENT_REQUEST_IDS.lock() {
                     request_ids.remove(&agent.id);
                 }
 
                 break;
             }
         }
-        thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -403,8 +406,8 @@ fn handle_callback_result(
             // Send error back to MCP server if there's an active request
             if let Some(request_id) = &agent.request_id {
                 let error_msg = format!("Error: {:?}", e);
-                if let Ok(channels) = crate::mcp_server::MCP_RESPONSE_CHANNELS.lock() {
-                    if let Some(tx) = channels.get(request_id) {
+                if let Ok(mut channels) = MCP_RESPONSE_CHANNELS.lock() {
+                    if let Some(tx) = channels.remove(request_id) {
                         if let Err(e) = tx.send(error_msg) {
                             eprintln!("Failed to send error response to MCP server: {}", e);
                         }

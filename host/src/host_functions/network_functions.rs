@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use reqwest::Method;
-use reqwest::blocking::Client;
+use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
-pub fn http_request(
+pub async fn http_request(
     client: Arc<Client>,
     url: &str,
     method: &str,
     body: Option<&[u8]>,
     headers: Option<&[(&str, &str)]>,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let method = match method.to_uppercase().as_str() {
         "GET" => Method::GET,
         "POST" => Method::POST,
@@ -53,8 +53,8 @@ pub fn http_request(
 
     request_builder = request_builder.headers(header_map);
 
-    let response = request_builder.send()?;
+    let response = request_builder.send().await?;
 
-    let body_text = response.text()?;
+    let body_text = response.text().await?;
     Ok(body_text)
 }

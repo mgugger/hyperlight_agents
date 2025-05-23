@@ -10,6 +10,7 @@ pub trait Agent {
     fn process(&self, function_call: &FunctionCall) -> Result<Vec<u8>, Self::Error>;
 }
 
+#[derive(Debug, Clone)]
 pub struct Param {
     pub name: Vec<u8>,
     pub param_type: ParamType,
@@ -17,6 +18,7 @@ pub struct Param {
     pub required: bool,
 }
 
+#[derive(Debug, Clone)]
 pub enum ParamType {
     String,
     Integer,

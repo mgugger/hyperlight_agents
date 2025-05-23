@@ -13,3 +13,5 @@ Each agent runs in its own isolated sandbox with controlled access to system res
 cd guest && cargo build
 cd host && cargo run
 ```
+
+Access the the tools via MCP on localhost:3000/sse.
