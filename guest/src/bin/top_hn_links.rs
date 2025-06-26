@@ -24,8 +24,8 @@ use hyperlight_guest::host_function_call::call_host_function;
 
 use regex::Regex;
 
-use hyperlight_agents_common::Agent;
 use hyperlight_agents_common::constants;
+use hyperlight_agents_common::Agent;
 
 use strum_macros::AsRefStr;
 
@@ -84,7 +84,7 @@ impl Agent for TopHNLinksAgent {
             constants::HostMethod::FetchData.as_ref(),
             "https://news.ycombinator.com/",
             "",
-            "ProcessHttpResponse",
+            AgentConstants::ProcessHttpResponse.as_ref(),
         )
     }
 }

@@ -306,8 +306,10 @@ pub fn register_host_functions(
 
     // VM Management Functions
     let vm_manager_clone = vm_manager.clone();
-    let create_vm_fn = Arc::new(Mutex::new(move |vm_id: String, _param: String| {
+    let tx_clone = tx.clone();
+    let create_vm_fn = Arc::new(Mutex::new(move |vm_id: String, callback_name: String| {
         let vm_manager = vm_manager_clone.clone();
+        let sender = tx_clone.clone();
 
         // Create a new thread with a runtime for the VM creation
         std::thread::spawn(move || {
@@ -318,7 +320,10 @@ pub fn register_host_functions(
                     Err(e) => format!("VM creation failed: {}", e),
                 }
             });
-            println!("VM creation result: {}", response);
+
+            if let Err(e) = sender.send((Some(response), callback_name)) {
+                eprintln!("Failed to send VM creation response: {:?}", e);
+            }
         });
 
         Ok("VM creation initiated".to_string())
@@ -356,7 +361,7 @@ pub fn register_host_functions(
         let working_dir = command_data["working_dir"].as_str().map(|s| s.to_string());
         let timeout_seconds = command_data["timeout_seconds"].as_u64();
 
-        // Create a new thread with a runtime for the command execution
+        // Create a new thread with a runtime for the VM command execution
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             let response = rt.block_on(async {
@@ -383,8 +388,10 @@ pub fn register_host_functions(
     )?;
 
     let vm_manager_clone = vm_manager.clone();
-    let destroy_vm_fn = Arc::new(Mutex::new(move |vm_id: String, _param: String| {
+    let tx_clone = tx.clone();
+    let destroy_vm_fn = Arc::new(Mutex::new(move |vm_id: String, callback_name: String| {
         let vm_manager = vm_manager_clone.clone();
+        let sender = tx_clone.clone();
 
         // Create a new thread with a runtime for the VM destruction
         std::thread::spawn(move || {
@@ -395,7 +402,10 @@ pub fn register_host_functions(
                     Err(e) => format!("VM destruction failed: {}", e),
                 }
             });
-            println!("VM destruction result: {}", response);
+
+            if let Err(e) = sender.send((Some(response), callback_name)) {
+                eprintln!("Failed to send VM destruction response: {:?}", e);
+            }
         });
 
         Ok("VM destruction initiated".to_string())
@@ -407,9 +417,22 @@ pub fn register_host_functions(
     )?;
 
     let vm_manager_clone = vm_manager.clone();
-    let list_vms_fn = Arc::new(Mutex::new(move |_param1: String, _param2: String| {
-        let vms = vm_manager_clone.list_vms();
-        Ok(serde_json::to_string(&vms).unwrap_or_else(|_| "[]".to_string()))
+    let tx_clone = tx.clone();
+    let list_vms_fn = Arc::new(Mutex::new(move |_param1: String, callback_name: String| {
+        let vm_manager = vm_manager_clone.clone();
+        let sender = tx_clone.clone();
+
+        // Create a new thread for the VM listing
+        std::thread::spawn(move || {
+            let vms = vm_manager.list_vms();
+            let response = serde_json::to_string(&vms).unwrap_or_else(|_| "[]".to_string());
+
+            if let Err(e) = sender.send((Some(response), callback_name)) {
+                eprintln!("Failed to send VM list response: {:?}", e);
+            }
+        });
+
+        Ok("VM list request initiated".to_string())
     }));
     list_vms_fn.register_with_extra_allowed_syscalls(sandbox, "list_vms", all_syscalls.clone())?;
 

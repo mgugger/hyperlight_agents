@@ -1,7 +1,7 @@
 [package]
 name = "hyperlight-agents-guest"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 hyperlight-guest = { git = "https://github.com/hyperlight-dev/hyperlight.git" }
@@ -11,3 +11,14 @@ hyperlight-agents-common = { path = "./../hyperlight_agents_common", version = "
 regex = { version = "1.11.1", default-features = false }
 strum = { version = "0.27", default-features = false, features = ["derive"] }
 strum_macros = "0.27"
+serde = { version = "1.0", default-features = false, features = [
+    "alloc",
+    "derive",
+] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

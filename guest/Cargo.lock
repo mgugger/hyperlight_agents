@@ -83,6 +83,8 @@ dependencies = [
  "hyperlight-common",
  "hyperlight-guest",
  "regex",
+ "serde",
+ "serde_json",
  "strum",
  "strum_macros",
 ]

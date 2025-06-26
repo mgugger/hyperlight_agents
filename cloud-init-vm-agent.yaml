@@ -1,0 +1,209 @@
+#cloud-config
+
+# Cloud-init configuration for Hyperlight VM Agent
+# This script sets up a VM to automatically connect back to the host
+
+packages:
+  - socat
+  - jq
+  - curl
+  - git
+  - build-essential
+  - python3
+  - python3-pip
+  - nodejs
+  - npm
+
+write_files:
+  - path: /usr/local/bin/vm-agent.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      
+      # VM Agent Script - Simplified version for cloud-init
+      VM_ID="${VM_ID:-$(hostname)}"
+      HOST_CID="2"  # Host CID is always 2
+      REGISTER_PORT="1234"
+      LOG_FILE="/var/log/vm-agent.log"
+      
+      log() {
+          echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+      }
+      
+      register_with_host() {
+          local cid="$1"
+          local registration_msg="{\"type\":\"register\",\"vm_id\":\"$VM_ID\",\"cid\":$cid}"
+          
+          log "Registering with host: $registration_msg"
+          echo "$registration_msg" | socat - VSOCK-CONNECT:$HOST_CID:$REGISTER_PORT 2>/dev/null
+          
+          if [ $? -eq 0 ]; then
+              log "Successfully registered with host"
+              return 0
+          else
+              log "Failed to register with host"
+              return 1
+          fi
+      }
+      
+      execute_command() {
+          local command_json="$1"
+          
+          local cmd=$(echo "$command_json" | jq -r '.command // empty')
+          local working_dir=$(echo "$command_json" | jq -r '.working_dir // empty')
+          local timeout_seconds=$(echo "$command_json" | jq -r '.timeout_seconds // empty')
+          local command_id=$(echo "$command_json" | jq -r '.id // empty')
+          
+          if [ -z "$cmd" ]; then
+              log "ERROR: No command specified"
+              return 1
+          fi
+          
+          log "Executing command: $cmd"
+          
+          if [ -n "$working_dir" ] && [ -d "$working_dir" ]; then
+              cd "$working_dir"
+          fi
+          
+          local start_time=$(date +%s)
+          local temp_stdout=$(mktemp)
+          local temp_stderr=$(mktemp)
+          
+          if [ -n "$timeout_seconds" ] && [ "$timeout_seconds" -gt 0 ]; then
+              timeout "${timeout_seconds}s" bash -c "$cmd" > "$temp_stdout" 2> "$temp_stderr"
+          else
+              bash -c "$cmd" > "$temp_stdout" 2> "$temp_stderr"
+          fi
+          
+          local exit_code=$?
+          local end_time=$(date +%s)
+          local duration=$((end_time - start_time))
+          
+          local stdout_content=$(cat "$temp_stdout" | jq -Rs .)
+          local stderr_content=$(cat "$temp_stderr" | jq -Rs .)
+          
+          rm -f "$temp_stdout" "$temp_stderr"
+          
+          local result_msg="{\"type\":\"command_result\",\"id\":\"$command_id\",\"vm_id\":\"$VM_ID\",\"exit_code\":$exit_code,\"stdout\":$stdout_content,\"stderr\":$stderr_content,\"duration\":$duration}"
+          
+          log "Command completed with exit code $exit_code in ${duration}s"
+          echo "$result_msg" | socat - VSOCK-CONNECT:$HOST_CID:$REGISTER_PORT 2>/dev/null
+      }
+      
+      listen_for_commands() {
+          log "Starting command listener"
+          
+          while true; do
+              local command_json=$(timeout 60s socat - VSOCK-LISTEN:1235,reuseaddr 2>/dev/null)
+              
+              if [ -n "$command_json" ]; then
+                  log "Received command: $command_json"
+                  execute_command "$command_json" &
+              fi
+              
+              sleep 1
+          done
+      }
+      
+      main() {
+          log "Starting VM Agent for VM: $VM_ID"
+          
+          # Get VM's CID (simplified approach)
+          local vm_cid=$((100 + RANDOM % 900))
+          log "VM CID: $vm_cid"
+          
+          # Register with host
+          while true; do
+              if register_with_host "$vm_cid"; then
+                  break
+              else
+                  log "Registration failed, retrying in 5 seconds..."
+                  sleep 5
+              fi
+          done
+          
+          # Start command listener
+          listen_for_commands &
+          
+          # Keep alive
+          while true; do
+              sleep 30
+              register_with_host "$vm_cid" >/dev/null 2>&1
+          done
+      }
+      
+      main
+
+  - path: /etc/systemd/system/vm-agent.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=VM Agent for Hyperlight Agents
+      After=network.target
+      Wants=network.target
+      
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/vm-agent.sh
+      Restart=always
+      RestartSec=10
+      User=root
+      StandardOutput=append:/var/log/vm-agent.log
+      StandardError=append:/var/log/vm-agent.log
+      Environment=VM_ID=%H
+      
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /home/ubuntu/welcome.txt
+    content: |
+      Welcome to Hyperlight VM Agent!
+      
+      This VM is configured to:
+      - Connect back to the host via VSOCK
+      - Execute build and test commands
+      - Provide isolated environment for development
+      
+      VM Agent logs: /var/log/vm-agent.log
+      Service status: sudo systemctl status vm-agent
+      
+      Available tools:
+      - socat (for VSOCK communication)
+      - jq (for JSON parsing)
+      - git, build-essential, python3, nodejs
+      
+      To manually test the agent:
+      sudo /usr/local/bin/vm-agent.sh
+
+runcmd:
+  # Create log file
+  - touch /var/log/vm-agent.log
+  - chmod 644 /var/log/vm-agent.log
+  
+  # Enable and start the VM agent service
+  - systemctl daemon-reload
+  - systemctl enable vm-agent.service
+  - systemctl start vm-agent.service
+  
+  # Create development directories
+  - mkdir -p /workspace
+  - chmod 755 /workspace
+  - chown ubuntu:ubuntu /workspace
+  
+  # Install additional development tools
+  - pip3 install pytest black flake8
+  - npm install -g prettier eslint
+  
+  # Set up git (placeholder values)
+  - sudo -u ubuntu git config --global user.name "VM Agent"
+  - sudo -u ubuntu git config --global user.email "vm-agent@example.com"
+  
+  # Log completion
+  - echo "VM setup completed at $(date)" >> /var/log/vm-agent.log
+
+final_message: |
+  VM Agent setup complete!
+  The VM is now ready to receive commands from the host.
+  
+  Check the agent status with: sudo systemctl status vm-agent
+  View logs with: sudo journalctl -u vm-agent -f
