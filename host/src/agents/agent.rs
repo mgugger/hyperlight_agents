@@ -8,6 +8,7 @@ use hyperlight_host::sandbox_state::sandbox::EvolvableSandbox;
 use hyperlight_host::sandbox_state::transition::Noop;
 use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
 
+use crate::host_functions::firecracker_vm_functions::VmManager;
 use crate::host_functions::network_functions::http_request;
 use crate::mcp_server::{MCP_AGENT_REQUEST_IDS, MCP_RESPONSE_CHANNELS};
 use hyperlight_agents_common::constants;
@@ -31,6 +32,7 @@ pub fn create_agent(
     agent_id: String,
     http_client: Arc<Client>,
     binary_path: String,
+    vm_manager: Arc<VmManager>,
 ) -> hyperlight_host::Result<Agent> {
     // Create a channel for communication
     let (tx, rx) = channel::<(Option<String>, String)>();
@@ -53,6 +55,7 @@ pub fn create_agent(
         tx.clone(),
         http_client,
         &agent_id,
+        vm_manager,
     )?;
 
     // Initialize the sandbox
@@ -188,6 +191,7 @@ pub fn register_host_functions(
     tx: Sender<(Option<String>, String)>,
     http_client: Arc<Client>,
     agent_id: &str,
+    vm_manager: Arc<VmManager>,
 ) -> hyperlight_host::Result<()> {
     // HTTP GET function
     let tx_clone = tx.clone();
@@ -299,6 +303,115 @@ pub fn register_host_functions(
         constants::HostMethod::FinalResult.as_ref(),
         all_syscalls,
     )?;
+
+    // VM Management Functions
+    let vm_manager_clone = vm_manager.clone();
+    let create_vm_fn = Arc::new(Mutex::new(move |vm_id: String, _param: String| {
+        let vm_manager = vm_manager_clone.clone();
+
+        // Create a new thread with a runtime for the VM creation
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let response = rt.block_on(async {
+                match vm_manager.create_vm(vm_id).await {
+                    Ok(resp) => resp,
+                    Err(e) => format!("VM creation failed: {}", e),
+                }
+            });
+            println!("VM creation result: {}", response);
+        });
+
+        Ok("VM creation initiated".to_string())
+    }));
+    let all_syscalls: Vec<i64> = (0..=500).collect();
+    create_vm_fn.register_with_extra_allowed_syscalls(
+        sandbox,
+        "create_vm",
+        all_syscalls.clone(),
+    )?;
+
+    let vm_manager_clone = vm_manager.clone();
+    let tx_clone = tx.clone();
+    let execute_vm_command_fn = Arc::new(Mutex::new(move |vm_id: String, command_json: String| {
+        let vm_manager = vm_manager_clone.clone();
+        let sender = tx_clone.clone();
+
+        // Parse command JSON
+        let command_data: serde_json::Value = match serde_json::from_str(&command_json) {
+            Ok(data) => data,
+            Err(e) => {
+                return Ok(format!("Failed to parse command JSON: {}", e));
+            }
+        };
+
+        let command = command_data["command"].as_str().unwrap_or("").to_string();
+        let args: Vec<String> = command_data["args"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let working_dir = command_data["working_dir"].as_str().map(|s| s.to_string());
+        let timeout_seconds = command_data["timeout_seconds"].as_u64();
+
+        // Create a new thread with a runtime for the command execution
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let response = rt.block_on(async {
+                match vm_manager
+                    .execute_command_in_vm(&vm_id, command, args, working_dir, timeout_seconds)
+                    .await
+                {
+                    Ok(resp) => resp,
+                    Err(e) => format!("VM command execution failed: {}", e),
+                }
+            });
+
+            if let Err(e) = sender.send((Some(response), "vm_command_result".to_string())) {
+                eprintln!("Failed to send VM command response: {:?}", e);
+            }
+        });
+
+        Ok("VM command execution initiated".to_string())
+    }));
+    execute_vm_command_fn.register_with_extra_allowed_syscalls(
+        sandbox,
+        "execute_vm_command",
+        all_syscalls.clone(),
+    )?;
+
+    let vm_manager_clone = vm_manager.clone();
+    let destroy_vm_fn = Arc::new(Mutex::new(move |vm_id: String, _param: String| {
+        let vm_manager = vm_manager_clone.clone();
+
+        // Create a new thread with a runtime for the VM destruction
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let response = rt.block_on(async {
+                match vm_manager.destroy_vm(&vm_id).await {
+                    Ok(resp) => resp,
+                    Err(e) => format!("VM destruction failed: {}", e),
+                }
+            });
+            println!("VM destruction result: {}", response);
+        });
+
+        Ok("VM destruction initiated".to_string())
+    }));
+    destroy_vm_fn.register_with_extra_allowed_syscalls(
+        sandbox,
+        "destroy_vm",
+        all_syscalls.clone(),
+    )?;
+
+    let vm_manager_clone = vm_manager.clone();
+    let list_vms_fn = Arc::new(Mutex::new(move |_param1: String, _param2: String| {
+        let vms = vm_manager_clone.list_vms();
+        Ok(serde_json::to_string(&vms).unwrap_or_else(|_| "[]".to_string()))
+    }));
+    list_vms_fn.register_with_extra_allowed_syscalls(sandbox, "list_vms", all_syscalls.clone())?;
 
     Ok(())
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use host_functions::firecracker_vm_functions::VmManager;
 use mcp::mcp_server;
 
 mod agents;
@@ -24,6 +25,14 @@ async fn main() -> hyperlight_host::Result<()> {
             .build()
             .unwrap(),
     );
+
+    // Create VM manager and start VSOCK server
+    let vm_manager = Arc::new(VmManager::new());
+    if let Err(e) = vm_manager.start_vsock_server(1234) {
+        eprintln!("Failed to start VSOCK server: {}", e);
+    } else {
+        println!("VSOCK server started on port 1234");
+    }
 
     let agent_ids: Vec<String> = std::fs::read_dir("./../guest/target/x86_64-unknown-none/debug/")
         .expect("Failed to read directory")
@@ -48,6 +57,7 @@ async fn main() -> hyperlight_host::Result<()> {
             agent_id.to_string(),
             http_client.clone(),
             agent_id.to_string(),
+            vm_manager.clone(),
         )?;
         agents.push(agent);
     }

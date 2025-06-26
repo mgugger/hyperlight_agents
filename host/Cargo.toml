@@ -21,6 +21,10 @@ rust-mcp-sdk = { version = "0.2.6", features = ["hyper-server"] }
 async-trait = "0.1.74"
 schemars = "0.8.16"
 rust-mcp-schema = "0.4.0"
+vsock = "0.4"
+nix = "0.27"
+tempfile = "3.8"
+chrono = { version = "0.4", features = ["serde"] }
 
 [build-dependencies]
 anyhow = { version = "1.0" }
