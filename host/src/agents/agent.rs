@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use hyperlight_common::flatbuffer_wrappers::function_types::{ParameterValue, ReturnType};
-use hyperlight_host::func::{HostFunction2, ReturnValue};
+use hyperlight_host::func::{HostFunction2, HostFunction3, ReturnValue};
 use hyperlight_host::sandbox::SandboxConfiguration;
 use hyperlight_host::sandbox_state::sandbox::EvolvableSandbox;
 use hyperlight_host::sandbox_state::transition::Noop;
@@ -120,8 +121,16 @@ pub fn create_agent(
                         .and_then(|s| s.strip_suffix('}'))
                     {
                         // Parse each parameter
-                        let name: Vec<u8> = param_json
+                        let name: String = param_json
                             .split("\"name\": \"")
+                            .nth(1)
+                            .and_then(|s| s.split("\"").next())
+                            .unwrap_or_default()
+                            .to_string()
+                            .into();
+
+                        let description: String = param_json
+                            .split("\"description\": \"")
                             .nth(1)
                             .and_then(|s| s.split("\"").next())
                             .unwrap_or_default()
@@ -133,7 +142,7 @@ pub fn create_agent(
                         // Default to String type since it's not included in the serialized format
                         params.push(Param {
                             name,
-                            description: None,
+                            description: Some(description),
                             param_type: hyperlight_agents_common::traits::agent::ParamType::String,
                             required,
                         });
@@ -151,8 +160,16 @@ pub fn create_agent(
                 .strip_prefix('{')
                 .and_then(|s| s.strip_suffix('}'))
             {
-                let name: Vec<u8> = param_json
+                let name: String = param_json
                     .split("\"name\": \"")
+                    .nth(1)
+                    .and_then(|s| s.split("\"").next())
+                    .unwrap_or_default()
+                    .to_string()
+                    .into();
+
+                let description: String = param_json
+                    .split("\"description\": \"")
                     .nth(1)
                     .and_then(|s| s.split("\"").next())
                     .unwrap_or_default()
@@ -163,13 +180,13 @@ pub fn create_agent(
 
                 params.push(Param {
                     name: name,
-                    description: None,
+                    description: Some(description),
                     param_type: hyperlight_agents_common::traits::agent::ParamType::String,
                     required,
                 });
-                for param in &params {
-                    println!("Added parameter: {:?}", param);
-                }
+                // for param in &params {
+                //     println!("Added parameter: {:?}", param);
+                // }
             }
         }
     }
@@ -228,7 +245,7 @@ pub fn register_host_functions(
     // Final answer function
     let agent_id_clone = agent_id.split("/").last().unwrap_or(agent_id).to_string();
     let print_final_answer_fn = Arc::new(Mutex::new(move |answer: String, _param: String| {
-        println!("Agent {}: Final answer: {}", agent_id_clone, answer);
+        //println!("Agent {}: Final answer: {}", agent_id_clone, answer);
 
         // Capture a copy of the answer for the response
         let answer_copy = answer.clone();
@@ -331,42 +348,22 @@ pub fn register_host_functions(
     let all_syscalls: Vec<i64> = (0..=500).collect();
     create_vm_fn.register_with_extra_allowed_syscalls(
         sandbox,
-        "create_vm",
+        constants::HostMethod::CreateVM.as_ref(),
         all_syscalls.clone(),
     )?;
 
     let vm_manager_clone = vm_manager.clone();
     let tx_clone = tx.clone();
-    let execute_vm_command_fn = Arc::new(Mutex::new(move |vm_id: String, command_json: String| {
+    let execute_vm_command_fn = Arc::new(Mutex::new(move |vm_id: String, command: String, callback_name: String| {
         let vm_manager = vm_manager_clone.clone();
         let sender = tx_clone.clone();
-
-        // Parse command JSON
-        let command_data: serde_json::Value = match serde_json::from_str(&command_json) {
-            Ok(data) => data,
-            Err(e) => {
-                return Ok(format!("Failed to parse command JSON: {}", e));
-            }
-        };
-
-        let command = command_data["command"].as_str().unwrap_or("").to_string();
-        let args: Vec<String> = command_data["args"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let working_dir = command_data["working_dir"].as_str().map(|s| s.to_string());
-        let timeout_seconds = command_data["timeout_seconds"].as_u64();
 
         // Create a new thread with a runtime for the VM command execution
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             let response = rt.block_on(async {
                 match vm_manager
-                    .execute_command_in_vm(&vm_id, command, args, working_dir, timeout_seconds)
+                    .execute_command_in_vm(&vm_id, command, Vec::new(), Some("/".to_string()), Some(30))
                     .await
                 {
                     Ok(resp) => resp,
@@ -374,7 +371,7 @@ pub fn register_host_functions(
                 }
             });
 
-            if let Err(e) = sender.send((Some(response), "vm_command_result".to_string())) {
+            if let Err(e) = sender.send((Some(response), callback_name)) {
                 eprintln!("Failed to send VM command response: {:?}", e);
             }
         });
@@ -383,7 +380,7 @@ pub fn register_host_functions(
     }));
     execute_vm_command_fn.register_with_extra_allowed_syscalls(
         sandbox,
-        "execute_vm_command",
+        constants::HostMethod::ExecuteVMCommand.as_ref(),
         all_syscalls.clone(),
     )?;
 
@@ -412,7 +409,7 @@ pub fn register_host_functions(
     }));
     destroy_vm_fn.register_with_extra_allowed_syscalls(
         sandbox,
-        "destroy_vm",
+        constants::HostMethod::DestroyVM.as_ref(),
         all_syscalls.clone(),
     )?;
 
@@ -434,15 +431,29 @@ pub fn register_host_functions(
 
         Ok("VM list request initiated".to_string())
     }));
-    list_vms_fn.register_with_extra_allowed_syscalls(sandbox, "list_vms", all_syscalls.clone())?;
+    list_vms_fn.register_with_extra_allowed_syscalls(sandbox, constants::HostMethod::ListVMs.as_ref(), all_syscalls.clone())?;
 
     Ok(())
 }
 
-pub fn run_agent_event_loop(agent: &mut Agent) {
+pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
+    println!("Agent {} event loop started", agent.id);
+    
     loop {
+        // Check for shutdown signal first
+        if shutdown_flag.load(Ordering::Relaxed) {
+            println!("Agent {} received shutdown signal, exiting event loop", agent.id);
+            break;
+        }
+
         match agent.rx.try_recv() {
             Ok((content, callback_name)) => {
+                // Check shutdown flag again before processing message
+                if shutdown_flag.load(Ordering::Relaxed) {
+                    println!("Agent {} received shutdown signal during message processing, exiting", agent.id);
+                    break;
+                }
+
                 // Store the request ID if it's included in the message
                 if let Some(content_str) = &content {
                     if content_str.starts_with("mcp_request:") {
@@ -477,6 +488,7 @@ pub fn run_agent_event_loop(agent: &mut Agent) {
                             // Extract the actual message content
                             let actual_content = parts[2].to_string();
 
+                            println!("Callback function called: {}, params: {:?}", callback_name, actual_content);
                             let callback_result = agent.sandbox.call_guest_function_by_name(
                                 &callback_name,
                                 ReturnType::String,
@@ -485,6 +497,12 @@ pub fn run_agent_event_loop(agent: &mut Agent) {
 
                             // Don't automatically send the result back to MCP - wait for finalresult call
                             handle_callback_result(agent, callback_result);
+                            
+                            // Check shutdown flag after processing
+                            if shutdown_flag.load(Ordering::Relaxed) {
+                                println!("Agent {} received shutdown signal after processing message, exiting", agent.id);
+                                break;
+                            }
                             continue;
                         }
                     }
@@ -505,9 +523,15 @@ pub fn run_agent_event_loop(agent: &mut Agent) {
                 };
 
                 handle_callback_result(agent, callback_result);
+                
+                // Check shutdown flag after processing
+                if shutdown_flag.load(Ordering::Relaxed) {
+                    println!("Agent {} received shutdown signal after processing callback, exiting", agent.id);
+                    break;
+                }
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // No responses yet
+                // No responses yet - this is where we sleep and check again
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 println!("Agent {} channel disconnected", agent.id);
@@ -520,8 +544,12 @@ pub fn run_agent_event_loop(agent: &mut Agent) {
                 break;
             }
         }
-        std::thread::sleep(Duration::from_millis(100));
+        
+        // Sleep for a shorter duration for more responsive shutdown
+        std::thread::sleep(Duration::from_millis(50));
     }
+    
+    println!("Agent {} event loop terminated", agent.id);
 }
 
 fn handle_callback_result(

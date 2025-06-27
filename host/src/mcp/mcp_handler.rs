@@ -91,10 +91,15 @@ impl ServerHandler for HyperlightAgentHandler {
             response_channels.insert(request_id.clone(), resp_tx);
         }
 
+        let parameters = request.params.clone().arguments.unwrap_or_default();
+
+        // Convert parameters to a JSON string to pass to the agent
+        let params_json = serde_json::to_string(&parameters).unwrap_or_else(|_| "{}".to_string());
+
         // Send message to the agent
         let function_name = constants::GuestMethod::Run.as_ref().to_string();
         // Wrap the message with MCP protocol info
-        let mcp_message = format!("mcp_request:{}:{}", request_id, "message");
+        let mcp_message = format!("mcp_request:{}:{}", request_id, params_json);
 
         // Use .await to fix the Send future error
         if let Err(e) = agent_tx.clone().send((Some(mcp_message), function_name)) {
@@ -154,7 +159,7 @@ pub fn params_to_tool_input_schema(params: Vec<Param>) -> ToolInputSchema {
     let mut properties: HashMap<String, Map<String, Value>> = HashMap::new();
 
     for param in params {
-        let name_str = String::from_utf8_lossy(&param.name).to_string();
+        let name_str = param.name.to_string();
         if param.required {
             required.push(name_str.clone());
         }
@@ -177,9 +182,7 @@ pub fn params_to_tool_input_schema(params: Vec<Param>) -> ToolInputSchema {
 
         // Add description if provided
         if let Some(desc) = param.description {
-            if let Ok(desc_str) = String::from_utf8(desc) {
-                schema_entry.insert("description".to_string(), Value::String(desc_str));
-            }
+            schema_entry.insert("description".to_string(), Value::String(desc));
         }
 
         properties.insert(name_str, schema_entry);
