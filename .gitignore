@@ -33,6 +33,3 @@ Cargo.lock
 /guest/target/
 /host/target/
 /hyperlight_agents_common/target/
-
-# Dependencies
-**/.cargo/
