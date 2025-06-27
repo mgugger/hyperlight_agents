@@ -4,6 +4,10 @@ use strum_macros::AsRefStr;
 pub enum HostMethod {
     FinalResult,
     FetchData,
+    CreateVM,
+    DestroyVM,
+    ListVMs,
+    ExecuteVMCommand
 }
 
 #[derive(Debug, PartialEq, AsRefStr)]

@@ -1,3 +1,7 @@
+/vm-images/rootfs.ext4
+/vm-images/rootfs.ext4.backup
+/vm-images/vmlinux*
+
 # Exclude build artifacts and target directories
 **/target/
 target/
