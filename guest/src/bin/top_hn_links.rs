@@ -4,7 +4,6 @@
 extern crate alloc;
 extern crate hyperlight_guest;
 
-use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -39,21 +38,21 @@ enum AgentConstants {
 impl Agent for TopHNLinksAgent {
     type Error = HyperlightGuestError;
 
-    fn get_name(&self) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
+    fn get_name() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
         Ok(get_flatbuffer_result("TopHNLinks"))
     }
 
-    fn get_description(&self) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
+    fn get_description() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
         Ok(get_flatbuffer_result(
             "An Agent that returns the current Top Hacker News Links",
         ))
     }
 
-    fn get_params(&self) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
+    fn get_params() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
         let mut params: Vec<Param> = Vec::new();
         let param = Param {
-            name: "test".as_bytes().to_owned(),
-            description: Some("test".as_bytes().to_owned()),
+            name: "test".to_string(),
+            description: Some("test".to_string()),
             param_type: ParamType::String,
             required: true,
         };
@@ -67,8 +66,7 @@ impl Agent for TopHNLinksAgent {
             }
             serialized.push_str(&format!(
                 "{{\"name\": \"{}\", \"required\": {}}}",
-                core::str::from_utf8(&p.name).unwrap_or("invalid"),
-                p.required
+                &p.name, p.required
             ));
         }
         serialized.push_str("]");
@@ -77,14 +75,16 @@ impl Agent for TopHNLinksAgent {
     }
 
     fn process(
-        &self,
         _function_call: &FunctionCall,
     ) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
         send_message_to_host_method(
             constants::HostMethod::FetchData.as_ref(),
             "https://news.ycombinator.com/",
             "",
-            AgentConstants::ProcessHttpResponse.as_ref(),
+            AgentConstants::ProcessHttpResponse
+                .as_ref()
+                .to_string()
+                .as_str(),
         )
     }
 }

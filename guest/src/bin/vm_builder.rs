@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use hyperlight_agents_common::constants;
 
@@ -34,21 +34,21 @@ enum AgentConstants {
 impl Agent for VmBuilderAgent {
     type Error = HyperlightGuestError;
 
-    fn get_name(&self) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
+    fn get_name() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
         Ok(get_flatbuffer_result("VmBuilder"))
     }
 
-    fn get_description(&self) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
+    fn get_description() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
         Ok(get_flatbuffer_result(
             "An Agent that can create VMs and execute build/test commands in them",
         ))
     }
 
-    fn get_params(&self) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
+    fn get_params() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
         let params_json = r#"[
             {
                 "name": "action",
-                "description": "Action to perform: create_vm, execute_command, destroy_vm, list_vms",
+                "description": "Action to perform, must be one of: create_vm, execute_vm_command, destroy_vm, list_vms",
                 "type": "string",
                 "required": true
             },
@@ -69,29 +69,99 @@ impl Agent for VmBuilderAgent {
     }
 
     fn process(
-        &self,
-        _function_call: &FunctionCall,
+        function_call: &FunctionCall,
     ) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
-        // Call the host function and return success message
-        match call_host_function(
-            "create_vm",
-            Some(Vec::from(&[
-                ParameterValue::String("test_vm".to_string()),
-                ParameterValue::String(
+        if let ParameterValue::String(json_params) = &function_call.parameters.as_ref().unwrap()[0]
+        {
+            let action =
+                parse_json_param(json_params, "action").unwrap_or_else(|| "create_vm".to_string());
+            let vm_id =
+                parse_json_param(json_params, "vm_id").unwrap_or_else(|| "default_vm".to_string());
+            let command =
+                parse_json_param(json_params, "command").unwrap_or_else(|| "".to_string());
+
+            let res: Result<()> = match action.as_str() {
+            "create_vm" => {
+                let params = Vec::from(&[
+                    ParameterValue::String(vm_id),
+                    ParameterValue::String(
                     AgentConstants::ProcessVmCreationResult.as_ref().to_string(),
                 ),
-            ])),
-            ReturnType::String,
-        ) {
-            Ok(_) => Ok(get_flatbuffer_result(
-                format!(
-                    "VM Creation: Successfully called create_vm host function with callback {}",
-                    AgentConstants::ProcessVmCreationResult.as_ref()
+                ]);
+                call_host_function(
+                    constants::HostMethod::CreateVM.as_ref(),
+                    Some(params),
+                    ReturnType::String,
                 )
-                .as_str(),
+            },
+            "execute_vm_command" => {
+                let params = Vec::from(&[
+                    ParameterValue::String(vm_id),
+                    ParameterValue::String(command),
+                    ParameterValue::String(
+                    AgentConstants::ProcessVmCommandResult.as_ref().to_string(),
+                ),
+                ]);
+                call_host_function(
+                    constants::HostMethod::ExecuteVMCommand.as_ref(),
+                    Some(params),
+                    ReturnType::String,
+                )
+            },
+            "destroy_vm" => {
+                let params = Vec::from(&[ParameterValue::String(vm_id),
+                ParameterValue::String(
+                    AgentConstants::ProcessVmDestructionResult.as_ref().to_string(),
+                )]);
+                call_host_function(
+                    constants::HostMethod::DestroyVM.as_ref(),
+                    Some(params),
+                    ReturnType::String,
+                )
+            },
+            "list_vms" => {
+                let params = Vec::from(&[ParameterValue::String("".to_string()),
+                ParameterValue::String(
+                    AgentConstants::ProcessVmListResult.as_ref().to_string(),
+                )]);
+                call_host_function(constants::HostMethod::ListVMs.as_ref(), Some(params), ReturnType::String)},
+            _ => return Err(HyperlightGuestError::new(
+                ErrorCode::GuestFunctionParameterTypeMismatch,
+                format!("VM action invalid, must be one of: create_vm, execute_vm_command, destroy_vm, list_vms. Got {:?}", action).to_string(),
             )),
-            Err(_) => Ok(get_flatbuffer_result("VM operation failed")),
+        };
+            match res {
+                Ok(_) => Ok(get_flatbuffer_result(
+                    format!(
+                        "VM operation OK: {:?}",
+                        action
+                    )
+                    .as_str(),
+                )),
+                Err(e) => Ok(get_flatbuffer_result(
+                    format!("VM operation failed {:?}", e).as_str(),
+                )),
+            }
+        } else {
+            Err(HyperlightGuestError::new(
+            ErrorCode::GuestFunctionParameterTypeMismatch,
+            "VM action invalid, must be one of: create_vm, execute_vm_command, destroy_vm, list_vms".to_string(),
+        ))
         }
+    }
+}
+
+fn parse_json_param(json: &str, key: &str) -> Option<alloc::string::String> {
+    let pattern = format!("\"{}\":\"", key);
+    if let Some(start) = json.find(&pattern) {
+        let start = start + pattern.len();
+        if let Some(end) = json[start..].find("\"") {
+            Some(json[start..start + end].to_string())
+        } else {
+            None
+        }
+    } else {
+        None
     }
 }
 
@@ -176,17 +246,13 @@ fn process_vm_destruction_result(function_call: &FunctionCall) -> Result<Vec<u8>
 fn process_vm_list_result(function_call: &FunctionCall) -> Result<Vec<u8>> {
     if let Some(parameters) = &function_call.parameters {
         if parameters.len() > 0 {
-            if let Some(param) = parameters.get(0) {
-                if let ParameterValue::String(response) = param {
-                    let result_message = format!("Available VMs: {}", response);
-                    return send_message_to_host_method(
-                        constants::HostMethod::FinalResult.as_ref(),
-                        result_message.as_str(),
-                        "",
-                        "",
-                    );
-                }
-            }
+            let result_message = format!("Available VMs: {:?}", parameters);
+            return send_message_to_host_method(
+                constants::HostMethod::FinalResult.as_ref(),
+                result_message.as_str(),
+                "",
+                "",
+            );
         }
     }
     Ok(get_flatbuffer_result("VM list result processed"))
