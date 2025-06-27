@@ -4,18 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-hyperlight-guest = { git = "https://github.com/hyperlight-dev/hyperlight.git" }
-hyperlight-common = { git = "https://github.com/hyperlight-dev/hyperlight.git", default-features = false }
-hyperlight-agents-common = { path = "./../hyperlight_agents_common", version = "0.1.0" }
+hyperlight-guest = { workspace = true }
+hyperlight-common = { workspace = true }
+hyperlight-agents-common = { workspace = true }
 
 regex = { version = "1.11.1", default-features = false }
-strum = { version = "0.27", default-features = false, features = ["derive"] }
-strum_macros = "0.27"
-serde = { version = "1.0", default-features = false, features = [
-    "alloc",
-    "derive",
-] }
-serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+serde = { workspace = true, default-features = false, features = ["alloc", "derive"] }
+serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 
 [profile.dev]
 panic = "abort"

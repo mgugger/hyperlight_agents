@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = [
+    "hyperlight_agents_common",
+    "guest", 
+    "host",
+    "vm-agent"
+]
+
+# Default configuration for all members
+default-members = [
+    "hyperlight_agents_common",
+    "guest",
+    "host"
+]
+
+# Default dependency versions for the workspace
+[workspace.dependencies]
+hyperlight-host = { version = "0.7.0", features = ["kvm"] }
+hyperlight-guest = { version = "0.7.0" }
+hyperlight-common = { version = "0.7.0", default-features = false }
+hyperlight-agents-common = { path = "./hyperlight_agents_common", version = "0.1.0" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+strum = { version = "0.27", default-features = false, features = ["derive"] }
+strum_macros = "0.27"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+
+# Workspace-wide profile settings
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+# Keep debug symbols for development but optimize for faster builds
+debug = true
+opt-level = 0
+
+# Workspace metadata for build tools
+[workspace.metadata]
+# Build order for dependencies
+build-order = [
+    "hyperlight_agents_common",
+    "guest",
+    "host",
+    "vm-agent"
+]
+
+# Special build instructions for vm-agent
+[workspace.metadata.vm-agent]
+target = "x86_64-unknown-linux-musl"
+profile = "release"

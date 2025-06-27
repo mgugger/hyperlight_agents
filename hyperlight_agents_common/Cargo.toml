@@ -1,9 +1,9 @@
 [package]
 name = "hyperlight-agents-common"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-hyperlight-common = { git = "https://github.com/hyperlight-dev/hyperlight.git", default-features = false }
-strum = { version = "0.27", default-features = false, features = ["derive"] }
-strum_macros = "0.27"
+hyperlight-common = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }

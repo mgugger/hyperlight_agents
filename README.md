@@ -1,4 +1,100 @@
-# Hyperlight Guests / Agents
+# Hyperlight Agents
+
+A Rust-based system for running agents in Firecracker VMs with VSOCK communication and MCP server integration.
+
+## Architecture
+
+This workspace contains multiple Rust projects:
+
+- **`hyperlight_agents_common`** - Common library shared between all components
+- **`guest/`** - Guest binaries that run inside Hyperlight sandboxes
+- **`host/`** - Host application that manages VMs and provides MCP server
+- **`vm-agent/`** - Static binary that runs inside Firecracker VMs
+
+## Building
+
+### Quick Start
+```bash
+# Build all main components (common, guest, host)
+cargo build
+
+# Build everything including VM agent
+cargo build --workspace
+cargo build -p vm-agent --target x86_64-unknown-linux-musl --release
+
+# Or use the aliases:
+cargo build-all        # Build all components
+cargo build-release    # Build all in release mode
+cargo build-vm-agent   # Build just the VM agent
+cargo build-main       # Build main components (excluding vm-agent)
+```
+
+### Individual Components
+```bash
+# Build common library
+cargo build -p hyperlight-agents-common
+
+# Build guest binaries
+cargo build -p hyperlight-agents-guest
+
+# Build host application
+cargo build -p hyperlight-agents-host
+
+# Build VM agent (requires musl target)
+cargo build -p vm-agent --target x86_64-unknown-linux-musl --release
+```
+
+### Running
+```bash
+# Run the host application
+cargo run -p hyperlight-agents-host
+
+# Or use the alias:
+cargo run-host
+```
+
+## Dependencies
+
+The build order is automatically handled by Cargo based on dependencies:
+1. `hyperlight_agents_common` (no dependencies)
+2. `guest` (depends on common)
+3. `host` (depends on common)
+4. `vm-agent` (standalone, builds with musl target)
+
+## Development
+
+```bash
+# Check all code
+cargo check --workspace
+
+# Run tests
+cargo test --workspace
+
+# Clean all build artifacts
+cargo clean --workspace
+# Or: cargo clean-all
+
+# Format code
+cargo fmt --all
+
+# Lint code
+cargo clippy --workspace
+```
+
+## Targets
+
+- Main components build for the default system target
+- VM agent builds for `x86_64-unknown-linux-musl` to create static binaries for VM deployment
+
+## Build Artifacts
+
+- Host binary: `target/debug/hyperlight-agents-host` (or `target/release/`)
+- Guest binaries: `guest/target/x86_64-unknown-none/debug/`
+- VM Agent: `vm-agent/target/x86_64-unknown-linux-musl/release/vm-agent`
+
+---
+
+## Legacy Documentation
 
 The demo implements hyperlight agents that can:
 1. Fetch the top stories from Hacker News via HTTP requests
