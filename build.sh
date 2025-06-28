@@ -102,13 +102,16 @@ echo
 # 1. Common library (no dependencies)
 build_package "hyperlight-agents-common" "Common Library"
 
-# 2. Guest binaries (depends on common)
-echo -e "${YELLOW}📦 Building Guest Binaries...${NC}"
-if cargo build -p "hyperlight-agents-guest" $BUILD_FLAGS; then
-    echo -e "${GREEN}✅ Guest Binaries built successfully${NC}"
+# 2. Guest binaries (depends on common) - built for x86_64-unknown-none target
+echo -e "${YELLOW}📦 Building Guest Binaries for x86_64-unknown-none...${NC}"
+cd guest
+if cargo build --target x86_64-unknown-none $BUILD_FLAGS; then
+    echo -e "${GREEN}✅ Guest Binaries built successfully for x86_64-unknown-none${NC}"
 else
-    echo -e "${YELLOW}⚠️  Guest build failed (may be due to API changes), continuing...${NC}"
+    echo -e "${RED}❌ Failed to build Guest Binaries for x86_64-unknown-none${NC}"
+    exit 1
 fi
+cd ..
 echo
 
 # 3. Host (depends on common)

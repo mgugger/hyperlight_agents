@@ -11,8 +11,8 @@ reqwest = { workspace = true }
 hyper = { version = "0.14", features = ["full"] }
 tokio = { workspace = true }
 futures = "0.3"
-serde = { workspace = true }
-serde_json = { workspace = true }
+serde = { workspace = true, default-features = false, features = ["alloc", "derive"] }
+serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 uuid = { version = "1.3", features = ["v4"] }
 lazy_static = "1.4"
 rust-mcp-sdk = { version = "0.2.6", features = ["hyper-server"] }

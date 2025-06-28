@@ -16,13 +16,14 @@ default-members = [
 
 # Default dependency versions for the workspace
 [workspace.dependencies]
-hyperlight-host = { version = "0.7.0", features = ["kvm"] }
+hyperlight-host = { version = "0.7.0", features = ["kvm", "seccomp"] }
 hyperlight-guest = { version = "0.7.0" }
+hyperlight-guest-bin = { version = "0.7.0" }
 hyperlight-common = { version = "0.7.0", default-features = false }
 hyperlight-agents-common = { path = "./hyperlight_agents_common", version = "0.1.0" }
 
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 strum = { version = "0.27", default-features = false, features = ["derive"] }
 strum_macros = "0.27"
 tokio = { version = "1", features = ["full"] }

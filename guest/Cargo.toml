@@ -5,11 +5,12 @@ edition = "2021"
 
 [dependencies]
 hyperlight-guest = { workspace = true }
+hyperlight-guest-bin = { workspace = true }
 hyperlight-common = { workspace = true }
 hyperlight-agents-common = { workspace = true }
 
 regex = { version = "1.11.1", default-features = false }
-strum = { workspace = true }
+strum = { workspace = true, default-features = false, features = ["derive"] }
 strum_macros = { workspace = true }
 serde = { workspace = true, default-features = false, features = ["alloc", "derive"] }
 serde_json = { workspace = true, default-features = false, features = ["alloc"] }

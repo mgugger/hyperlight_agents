@@ -1,10 +1,8 @@
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
-use hyperlight_common::flatbuffer_wrappers::function_types::{ParameterValue, ReturnType};
-use hyperlight_host::func::{HostFunction2, HostFunction3, ReturnValue};
-use hyperlight_host::sandbox::SandboxConfiguration;
+use hyperlight_host::sandbox::{ExtraAllowedSyscall, SandboxConfiguration};
 use hyperlight_host::sandbox_state::sandbox::EvolvableSandbox;
 use hyperlight_host::sandbox_state::transition::Noop;
 use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
@@ -14,7 +12,7 @@ use crate::host_functions::network_functions::http_request;
 use crate::mcp_server::{MCP_AGENT_REQUEST_IDS, MCP_RESPONSE_CHANNELS};
 use hyperlight_agents_common::constants;
 use reqwest::Client;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use hyperlight_agents_common::traits::agent::Param;
 
@@ -38,18 +36,23 @@ pub fn create_agent(
     // Create a channel for communication
     let (tx, rx) = channel::<(Option<String>, String)>();
 
-    // Create sandbox configuration
+    // Create a sandbox for this agent
+    let guest_instance = hyperlight_host::GuestBinary::FilePath(binary_path);
+
+    println!("DEBUG: Starting agent creation for {}", agent_id);
+
+    println!("DEBUG: Creating UninitializedSandbox with custom config...");
+
+    // Create a more permissive sandbox configuration
     let mut sandbox_config = SandboxConfiguration::default();
     sandbox_config.set_input_data_size(100 * 1024 * 1024);
     sandbox_config.set_output_data_size(100 * 1024 * 1024);
     sandbox_config.set_heap_size(100 * 1024 * 1024);
 
-    // Create a sandbox for this agent
-    let guest_instance = hyperlight_host::GuestBinary::FilePath(binary_path);
-
     let mut uninitialized_sandbox =
-        UninitializedSandbox::new(guest_instance, Some(sandbox_config), None, None)?;
+        UninitializedSandbox::new(guest_instance, Some(sandbox_config))?;
 
+    println!("DEBUG: Registering host functions...");
     // Register host functions specific to this agent
     register_host_functions(
         &mut uninitialized_sandbox,
@@ -60,43 +63,23 @@ pub fn create_agent(
     )?;
 
     // Initialize the sandbox
+    println!("DEBUG: Evolving sandbox...");
     let mut sandbox = uninitialized_sandbox.evolve(Noop::default())?;
 
-    let name = match sandbox
-        .call_guest_function_by_name(
-            constants::GuestMethod::GetName.as_ref(),
-            ReturnType::String,
-            Some(vec![ParameterValue::String("".to_string())]),
-        )
-        .unwrap()
-    {
-        ReturnValue::String(s) => s,
-        _ => panic!("Expected a string return value"),
-    };
+    println!("DEBUG: Calling guest GetName function...");
+    let name = sandbox
+        .call_guest_function_by_name::<String>(constants::GuestMethod::GetName.as_ref(), ())
+        .unwrap();
 
-    let description = match sandbox
-        .call_guest_function_by_name(
-            constants::GuestMethod::GetDescription.as_ref(),
-            ReturnType::String,
-            Some(vec![ParameterValue::String("".to_string())]),
-        )
-        .unwrap()
-    {
-        ReturnValue::String(s) => s,
-        _ => panic!("Expected a string return value"),
-    };
+    println!("DEBUG: Calling guest GetDescription function...");
+    let description = sandbox
+        .call_guest_function_by_name::<String>(constants::GuestMethod::GetDescription.as_ref(), ())
+        .unwrap();
 
-    let params_str = match sandbox
-        .call_guest_function_by_name(
-            constants::GuestMethod::GetParams.as_ref(),
-            ReturnType::String,
-            Some(vec![ParameterValue::String("".to_string())]),
-        )
-        .unwrap()
-    {
-        ReturnValue::String(s) => s,
-        _ => panic!("Expected a string return value"),
-    };
+    println!("DEBUG: Calling guest GetParams function...");
+    let params_str = sandbox
+        .call_guest_function_by_name::<String>(constants::GuestMethod::GetParams.as_ref(), ())
+        .unwrap();
 
     // Parse the JSON string to extract Param objects
     let mut params: Vec<Param> = Vec::new();
@@ -191,6 +174,7 @@ pub fn create_agent(
         }
     }
 
+    println!("DEBUG: Agent creation completed successfully");
     Ok(Agent {
         id: agent_id.split("/").last().unwrap().to_string(),
         name,
@@ -210,239 +194,199 @@ pub fn register_host_functions(
     agent_id: &str,
     vm_manager: Arc<VmManager>,
 ) -> hyperlight_host::Result<()> {
-    // HTTP GET function
-    let tx_clone = tx.clone();
-    let http_get_fn = Arc::new(Mutex::new(move |url: String, callback_name: String| {
-        let client = http_client.clone();
-        let sender = tx_clone.clone();
+    // Define common syscalls that guest code might need
+    let all_syscalls: Vec<i64> = (0..=500).collect();
 
-        // Create a new thread with a runtime for the HTTP request
-        std::thread::spawn(move || {
-            // Create a runtime for this thread
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let response = rt.block_on(async {
-                match http_request(client, &url, "GET", None, None).await {
-                    Ok(resp) => resp,
-                    Err(e) => format!("HTTP request failed: {}", e),
+    // Register HTTP fetch function with extra allowed syscalls
+    let http_client_clone = http_client.clone();
+    let tx_clone = tx.clone();
+
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::FetchData.as_ref(),
+        move |url: String, callback_name: String| {
+            let client = http_client_clone.clone();
+            let sender = tx_clone.clone();
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match http_request(client, &url, "GET", None, None).await {
+                        Ok(resp) => resp,
+                        Err(e) => format!("HTTP request failed: {}", e),
+                    }
+                });
+
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    eprintln!("Failed to send response: {:?}", e);
                 }
             });
 
-            if let Err(e) = sender.send((Some(response), callback_name)) {
-                eprintln!("Failed to send response: {:?}", e);
-            }
-        });
-
-        Ok("Http Request sent".to_string())
-    }));
-
-    let all_syscalls: Vec<i64> = (0..=500).collect();
-    http_get_fn.register_with_extra_allowed_syscalls(
-        sandbox,
-        constants::HostMethod::FetchData.as_ref(),
-        all_syscalls,
+            Ok("Http Request sent".to_string())
+        },
+        all_syscalls.clone(),
     )?;
 
-    // Final answer function
+    // Register final result function
     let agent_id_clone = agent_id.split("/").last().unwrap_or(agent_id).to_string();
-    let print_final_answer_fn = Arc::new(Mutex::new(move |answer: String, _param: String| {
-        //println!("Agent {}: Final answer: {}", agent_id_clone, answer);
 
-        // Capture a copy of the answer for the response
-        let answer_copy = answer.clone();
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::FinalResult.as_ref(),
+        move |answer: String, _param: String| {
+            println!("Finalresult called for agent {}", agent_id_clone);
 
-        // Instead of a separate thread, directly process the response here
-        // to avoid potential race conditions with the response channel
-        println!("Finalresult called for agent {}", agent_id_clone);
-
-        // Look up the request ID for this agent
-        let request_id = {
-            if let Ok(request_ids) = MCP_AGENT_REQUEST_IDS.lock() {
-                println!("DEBUG: FULL request map: {:?}", *request_ids);
-                println!(
-                    "Available agent IDs in request map: {:?}",
-                    request_ids.keys().collect::<Vec<_>>()
-                );
-
-                if let Some(request_id) = request_ids.get(&agent_id_clone) {
-                    Some(request_id.clone())
+            // Look up the request ID for this agent
+            let request_id = {
+                if let Ok(request_ids) = MCP_AGENT_REQUEST_IDS.lock() {
+                    request_ids.get(&agent_id_clone).cloned()
                 } else {
-                    println!(
-                        "No active request ID found for agent {}. Map contains: {:?}",
-                        agent_id_clone, request_ids
-                    );
                     None
                 }
-            } else {
-                eprintln!("Failed to lock request IDs");
-                None
-            }
-        };
+            };
 
-        // If we found a request ID, send the answer
-        if let Some(request_id) = request_id {
-            println!(
-                "Found request ID {} for agent {}",
-                request_id, agent_id_clone
-            );
-
-            // Send the answer back through the MCP response channel
-            if let Ok(mut channels) = MCP_RESPONSE_CHANNELS.lock() {
-                if let Some(tx) = channels.remove(&request_id) {
-                    println!("Sending final result to MCP for request {}", request_id);
-
-                    match tx.send(answer_copy) {
-                        Ok(_) => {
-                            println!(
-                                "Successfully sent final result to MCP for request {}",
-                                request_id
-                            );
-                            // Don't remove the request ID here - let the MCP server handle cleanup
-                            // when it receives the response
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to send final result to MCP server: {}", e);
-                        }
+            // If we found a request ID, send the answer
+            if let Some(request_id) = request_id {
+                if let Ok(mut channels) = MCP_RESPONSE_CHANNELS.lock() {
+                    if let Some(tx) = channels.remove(&request_id) {
+                        let _ = tx.send(answer);
                     }
-                } else {
-                    eprintln!("No response channel found for request ID {}", request_id);
                 }
-            } else {
-                eprintln!("Failed to lock response channels");
             }
-        }
 
-        // Return quickly to avoid lock contention with the guest
-        Ok(())
-    }));
-    let all_syscalls: Vec<i64> = (0..=500).collect();
-    print_final_answer_fn.register_with_extra_allowed_syscalls(
-        sandbox,
-        constants::HostMethod::FinalResult.as_ref(),
-        all_syscalls,
+            Ok(())
+        },
+        all_syscalls.clone(),
     )?;
 
-    // VM Management Functions
+    // Register VM management functions
     let vm_manager_clone = vm_manager.clone();
     let tx_clone = tx.clone();
-    let create_vm_fn = Arc::new(Mutex::new(move |vm_id: String, callback_name: String| {
-        let vm_manager = vm_manager_clone.clone();
-        let sender = tx_clone.clone();
 
-        // Create a new thread with a runtime for the VM creation
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let response = rt.block_on(async {
-                match vm_manager.create_vm(vm_id).await {
-                    Ok(resp) => resp,
-                    Err(e) => format!("VM creation failed: {}", e),
-                }
-            });
-
-            if let Err(e) = sender.send((Some(response), callback_name)) {
-                eprintln!("Failed to send VM creation response: {:?}", e);
-            }
-        });
-
-        Ok("VM creation initiated".to_string())
-    }));
-    let all_syscalls: Vec<i64> = (0..=500).collect();
-    create_vm_fn.register_with_extra_allowed_syscalls(
-        sandbox,
+    sandbox.register_with_extra_allowed_syscalls(
         constants::HostMethod::CreateVM.as_ref(),
+        move |vm_id: String, callback_name: String| {
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match vm_manager.create_vm(vm_id).await {
+                        Ok(resp) => resp,
+                        Err(e) => format!("VM creation failed: {}", e),
+                    }
+                });
+
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    eprintln!("Failed to send VM creation response: {:?}", e);
+                }
+            });
+
+            Ok("VM creation initiated".to_string())
+        },
         all_syscalls.clone(),
     )?;
 
     let vm_manager_clone = vm_manager.clone();
     let tx_clone = tx.clone();
-    let execute_vm_command_fn = Arc::new(Mutex::new(move |vm_id: String, command: String, callback_name: String| {
-        let vm_manager = vm_manager_clone.clone();
-        let sender = tx_clone.clone();
 
-        // Create a new thread with a runtime for the VM command execution
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let response = rt.block_on(async {
-                match vm_manager
-                    .execute_command_in_vm(&vm_id, command, Vec::new(), Some("/".to_string()), Some(30))
-                    .await
-                {
-                    Ok(resp) => resp,
-                    Err(e) => format!("VM command execution failed: {}", e),
-                }
-            });
-
-            if let Err(e) = sender.send((Some(response), callback_name)) {
-                eprintln!("Failed to send VM command response: {:?}", e);
-            }
-        });
-
-        Ok("VM command execution initiated".to_string())
-    }));
-    execute_vm_command_fn.register_with_extra_allowed_syscalls(
-        sandbox,
+    sandbox.register_with_extra_allowed_syscalls(
         constants::HostMethod::ExecuteVMCommand.as_ref(),
-        all_syscalls.clone(),
-    )?;
+        move |vm_id: String, command: String, callback_name: String| {
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
 
-    let vm_manager_clone = vm_manager.clone();
-    let tx_clone = tx.clone();
-    let destroy_vm_fn = Arc::new(Mutex::new(move |vm_id: String, callback_name: String| {
-        let vm_manager = vm_manager_clone.clone();
-        let sender = tx_clone.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match vm_manager
+                        .execute_command_in_vm(
+                            &vm_id,
+                            command,
+                            Vec::new(),
+                            Some("/".to_string()),
+                            Some(30),
+                        )
+                        .await
+                    {
+                        Ok(resp) => resp,
+                        Err(e) => format!("VM command execution failed: {}", e),
+                    }
+                });
 
-        // Create a new thread with a runtime for the VM destruction
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let response = rt.block_on(async {
-                match vm_manager.destroy_vm(&vm_id).await {
-                    Ok(resp) => resp,
-                    Err(e) => format!("VM destruction failed: {}", e),
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    eprintln!("Failed to send VM command response: {:?}", e);
                 }
             });
 
-            if let Err(e) = sender.send((Some(response), callback_name)) {
-                eprintln!("Failed to send VM destruction response: {:?}", e);
-            }
-        });
-
-        Ok("VM destruction initiated".to_string())
-    }));
-    destroy_vm_fn.register_with_extra_allowed_syscalls(
-        sandbox,
-        constants::HostMethod::DestroyVM.as_ref(),
+            Ok("VM command execution initiated".to_string())
+        },
         all_syscalls.clone(),
     )?;
 
     let vm_manager_clone = vm_manager.clone();
     let tx_clone = tx.clone();
-    let list_vms_fn = Arc::new(Mutex::new(move |_param1: String, callback_name: String| {
-        let vm_manager = vm_manager_clone.clone();
-        let sender = tx_clone.clone();
 
-        // Create a new thread for the VM listing
-        std::thread::spawn(move || {
-            let vms = vm_manager.list_vms();
-            let response = serde_json::to_string(&vms).unwrap_or_else(|_| "[]".to_string());
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::DestroyVM.as_ref(),
+        move |vm_id: String, callback_name: String| {
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
 
-            if let Err(e) = sender.send((Some(response), callback_name)) {
-                eprintln!("Failed to send VM list response: {:?}", e);
-            }
-        });
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match vm_manager.destroy_vm(&vm_id).await {
+                        Ok(resp) => resp,
+                        Err(e) => format!("VM destruction failed: {}", e),
+                    }
+                });
 
-        Ok("VM list request initiated".to_string())
-    }));
-    list_vms_fn.register_with_extra_allowed_syscalls(sandbox, constants::HostMethod::ListVMs.as_ref(), all_syscalls.clone())?;
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    eprintln!("Failed to send VM destruction response: {:?}", e);
+                }
+            });
+
+            Ok("VM destruction initiated".to_string())
+        },
+        all_syscalls.clone(),
+    )?;
+
+    let vm_manager_clone = vm_manager.clone();
+    let tx_clone = tx.clone();
+
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::ListVMs.as_ref(),
+        move |_param1: String, callback_name: String| {
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
+
+            std::thread::spawn(move || {
+                let vms = vm_manager.list_vms();
+                let response = serde_json::to_string(&vms).unwrap_or_else(|_| "[]".to_string());
+
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    eprintln!("Failed to send VM list response: {:?}", e);
+                }
+            });
+
+            Ok("VM list request initiated".to_string())
+        },
+        all_syscalls.clone(),
+    )?;
 
     Ok(())
 }
 
 pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
     println!("Agent {} event loop started", agent.id);
-    
+
     loop {
         // Check for shutdown signal first
         if shutdown_flag.load(Ordering::Relaxed) {
-            println!("Agent {} received shutdown signal, exiting event loop", agent.id);
+            println!(
+                "Agent {} received shutdown signal, exiting event loop",
+                agent.id
+            );
             break;
         }
 
@@ -450,7 +394,10 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
             Ok((content, callback_name)) => {
                 // Check shutdown flag again before processing message
                 if shutdown_flag.load(Ordering::Relaxed) {
-                    println!("Agent {} received shutdown signal during message processing, exiting", agent.id);
+                    println!(
+                        "Agent {} received shutdown signal during message processing, exiting",
+                        agent.id
+                    );
                     break;
                 }
 
@@ -488,16 +435,19 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
                             // Extract the actual message content
                             let actual_content = parts[2].to_string();
 
-                            println!("Callback function called: {}, params: {:?}", callback_name, actual_content);
-                            let callback_result = agent.sandbox.call_guest_function_by_name(
-                                &callback_name,
-                                ReturnType::String,
-                                Some(vec![ParameterValue::String(actual_content)]),
+                            println!(
+                                "Callback function called: {}, params: {:?}",
+                                callback_name, actual_content
                             );
+                            let callback_result =
+                                agent.sandbox.call_guest_function_by_name::<String>(
+                                    &callback_name,
+                                    actual_content,
+                                );
 
                             // Don't automatically send the result back to MCP - wait for finalresult call
                             handle_callback_result(agent, callback_result);
-                            
+
                             // Check shutdown flag after processing
                             if shutdown_flag.load(Ordering::Relaxed) {
                                 println!("Agent {} received shutdown signal after processing message, exiting", agent.id);
@@ -510,23 +460,22 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
 
                 // Regular callback handling (non-MCP messages)
                 let callback_result = match content {
-                    Some(content) => agent.sandbox.call_guest_function_by_name(
-                        &callback_name,
-                        ReturnType::String,
-                        Some(vec![ParameterValue::String(content)]),
-                    ),
-                    None => agent.sandbox.call_guest_function_by_name(
-                        &callback_name,
-                        ReturnType::String,
-                        Some(vec![]),
-                    ),
+                    Some(content) => agent
+                        .sandbox
+                        .call_guest_function_by_name::<String>(&callback_name, content),
+                    None => agent
+                        .sandbox
+                        .call_guest_function_by_name::<String>(&callback_name, ()),
                 };
 
                 handle_callback_result(agent, callback_result);
-                
+
                 // Check shutdown flag after processing
                 if shutdown_flag.load(Ordering::Relaxed) {
-                    println!("Agent {} received shutdown signal after processing callback, exiting", agent.id);
+                    println!(
+                        "Agent {} received shutdown signal after processing callback, exiting",
+                        agent.id
+                    );
                     break;
                 }
             }
@@ -544,17 +493,17 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
                 break;
             }
         }
-        
+
         // Sleep for a shorter duration for more responsive shutdown
         std::thread::sleep(Duration::from_millis(50));
     }
-    
+
     println!("Agent {} event loop terminated", agent.id);
 }
 
 fn handle_callback_result(
     agent: &mut Agent,
-    callback_result: Result<ReturnValue, hyperlight_host::HyperlightError>,
+    callback_result: Result<String, hyperlight_host::HyperlightError>,
 ) {
     match callback_result {
         Ok(result) => {

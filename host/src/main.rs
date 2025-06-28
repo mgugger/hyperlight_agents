@@ -35,7 +35,8 @@ async fn main() -> hyperlight_host::Result<()> {
         println!("VSOCK server started on port 1234");
     }
 
-    let agent_ids: Vec<String> = std::fs::read_dir("./../guest/target/x86_64-unknown-none/debug/")
+    let agent_ids: Vec<String> = std::fs::read_dir("./../target/x86_64-unknown-none/debug/")
+        .or_else(|_| std::fs::read_dir("./target/x86_64-unknown-none/debug/"))
         .expect("Failed to read directory")
         .filter_map(|entry| {
             entry.ok().and_then(|e| {
@@ -44,6 +45,7 @@ async fn main() -> hyperlight_host::Result<()> {
                     && !path.to_string_lossy().ends_with(".d")
                     && !path.to_string_lossy().ends_with(".cargo-lock")
                 {
+                    println!("Found agent binary: {}", path.display());
                     Some(path.to_string_lossy().into_owned())
                 } else {
                     None
@@ -54,13 +56,22 @@ async fn main() -> hyperlight_host::Result<()> {
     let mut agents = Vec::new();
 
     for agent_id in agent_ids {
-        let agent = agents::agent::create_agent(
+        println!("Creating agent for: {}", agent_id);
+        match agents::agent::create_agent(
             agent_id.to_string(),
             http_client.clone(),
             agent_id.to_string(),
             vm_manager.clone(),
-        )?;
-        agents.push(agent);
+        ) {
+            Ok(agent) => {
+                println!("✓ Agent created successfully: {}", agent.name);
+                agents.push(agent);
+            }
+            Err(e) => {
+                println!("✗ Failed to create agent {}: {:?}", agent_id, e);
+                return Err(e);
+            }
+        }
     }
 
     // senders

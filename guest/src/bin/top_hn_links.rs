@@ -7,86 +7,23 @@ extern crate hyperlight_guest;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-
-use hyperlight_agents_common::traits::agent::{Param, ParamType};
+use hyperlight_agents_common::constants;
 use hyperlight_common::flatbuffer_wrappers::function_call::FunctionCall;
 use hyperlight_common::flatbuffer_wrappers::function_types::{
     ParameterType, ParameterValue, ReturnType,
 };
 use hyperlight_common::flatbuffer_wrappers::guest_error::ErrorCode;
 use hyperlight_common::flatbuffer_wrappers::util::get_flatbuffer_result;
-
 use hyperlight_guest::error::{HyperlightGuestError, Result};
-use hyperlight_guest::guest_function_definition::GuestFunctionDefinition;
-use hyperlight_guest::guest_function_register::register_function;
-use hyperlight_guest::host_function_call::call_host_function;
-
+use hyperlight_guest_bin::guest_function::definition::GuestFunctionDefinition;
+use hyperlight_guest_bin::guest_function::register::register_function;
+use hyperlight_guest_bin::host_comm::call_host_function;
 use regex::Regex;
-
-use hyperlight_agents_common::constants;
-use hyperlight_agents_common::Agent;
-
 use strum_macros::AsRefStr;
-
-pub struct TopHNLinksAgent;
 
 #[derive(Debug, PartialEq, AsRefStr)]
 enum AgentConstants {
     ProcessHttpResponse,
-}
-
-impl Agent for TopHNLinksAgent {
-    type Error = HyperlightGuestError;
-
-    fn get_name() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
-        Ok(get_flatbuffer_result("TopHNLinks"))
-    }
-
-    fn get_description() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
-        Ok(get_flatbuffer_result(
-            "An Agent that returns the current Top Hacker News Links",
-        ))
-    }
-
-    fn get_params() -> core::result::Result<Vec<u8>, HyperlightGuestError> {
-        let mut params: Vec<Param> = Vec::new();
-        let param = Param {
-            name: "test".to_string(),
-            description: Some("test".to_string()),
-            param_type: ParamType::String,
-            required: true,
-        };
-        params.push(param);
-
-        let mut serialized = String::new();
-        serialized.push_str("[");
-        for (i, p) in params.iter().enumerate() {
-            if i > 0 {
-                serialized.push_str(", ");
-            }
-            serialized.push_str(&format!(
-                "{{\"name\": \"{}\", \"required\": {}}}",
-                &p.name, p.required
-            ));
-        }
-        serialized.push_str("]");
-
-        Ok(get_flatbuffer_result(serialized.as_str()))
-    }
-
-    fn process(
-        _function_call: &FunctionCall,
-    ) -> core::result::Result<Vec<u8>, HyperlightGuestError> {
-        send_message_to_host_method(
-            constants::HostMethod::FetchData.as_ref(),
-            "https://news.ycombinator.com/",
-            "",
-            AgentConstants::ProcessHttpResponse
-                .as_ref()
-                .to_string()
-                .as_str(),
-        )
-    }
 }
 
 fn send_message_to_host_method(
@@ -96,7 +33,8 @@ fn send_message_to_host_method(
     callback_function: &str,
 ) -> Result<Vec<u8>> {
     let message = format!("{}{}", guest_message, message);
-    call_host_function(
+    
+    let _res = call_host_function::<String>(
         method_name,
         Some(Vec::from(&[
             ParameterValue::String(message.to_string()),
@@ -105,9 +43,7 @@ fn send_message_to_host_method(
         ReturnType::String,
     )?;
 
-    Ok(get_flatbuffer_result(
-        format!("Host function {} called successfully", method_name).as_str(),
-    ))
+    Ok(get_flatbuffer_result("Success"))
 }
 
 pub fn find_title_links<'a>(html: &'a str) -> Vec<(&'a str, &'a str)> {
@@ -124,74 +60,98 @@ pub fn find_title_links<'a>(html: &'a str) -> Vec<(&'a str, &'a str)> {
 }
 
 fn process_http_response(function_call: &FunctionCall) -> Result<Vec<u8>> {
-    if let ParameterValue::String(http_body) = &function_call.parameters.as_ref().unwrap()[0] {
-        let mut result = String::from("Top Hacker News stories:\n");
-        //result.push_str(http_body);
-        let title_links = find_title_links(&http_body);
-        for (i, (url, title)) in title_links.iter().enumerate() {
-            result.push_str(&format!("{}. {} - {}\n", i + 1, title, url));
+    if let Some(parameters) = &function_call.parameters {
+        if let Some(ParameterValue::String(http_body)) = parameters.get(0) {
+            let mut result = String::from("Top Hacker News stories:\n");
+            let title_links = find_title_links(&http_body);
+            for (i, (url, title)) in title_links.iter().enumerate() {
+                result.push_str(&format!("{}. {} - {}\n", i + 1, title, url));
+            }
+            return send_message_to_host_method(
+                constants::HostMethod::FinalResult.as_ref(),
+                &result,
+                "",
+                "",
+            );
         }
-        send_message_to_host_method(
-            constants::HostMethod::FinalResult.as_ref(),
-            result.as_str(),
-            "",
-            "",
-        )
-    } else {
-        Err(HyperlightGuestError::new(
-            ErrorCode::GuestFunctionParameterTypeMismatch,
-            "Invalid parameters passed to guest_function".to_string(),
-        ))
     }
+    Err(HyperlightGuestError::new(
+        ErrorCode::GuestFunctionParameterTypeMismatch,
+        "Invalid parameters passed to process_http_response".to_string(),
+    ))
 }
 
-#[unsafe(no_mangle)]
+fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
+    // For now, just trigger the HTTP fetch
+    let _params = function_call.parameters.as_ref();
+    send_message_to_host_method(
+        constants::HostMethod::FetchData.as_ref(),
+        "https://news.ycombinator.com/",
+        "",
+        AgentConstants::ProcessHttpResponse.as_ref(),
+    )
+}
+
+fn guest_get_name(_function_call: &FunctionCall) -> Result<Vec<u8>> {
+    Ok(get_flatbuffer_result("TopHNLinks"))
+}
+
+fn guest_get_description(_function_call: &FunctionCall) -> Result<Vec<u8>> {
+    Ok(get_flatbuffer_result("An Agent that returns the current Top Hacker News Links"))
+}
+
+fn guest_get_params(_function_call: &FunctionCall) -> Result<Vec<u8>> {
+    let params_json = r#"[{"name": "url", "description": "URL to fetch", "type": "string", "required": false}]"#;
+    Ok(get_flatbuffer_result(params_json))
+}
+
+#[no_mangle]
 pub extern "C" fn hyperlight_main() {
-    let top_hn_links_def = GuestFunctionDefinition::new(
+    // Register the main run function
+    register_function(GuestFunctionDefinition::new(
         constants::GuestMethod::Run.as_ref().to_string(),
         Vec::from(&[ParameterType::String]),
         ReturnType::String,
-        TopHNLinksAgent::process as usize,
-    );
-    register_function(top_hn_links_def);
+        guest_run as usize,
+    ));
 
-    let process_http_response_def = GuestFunctionDefinition::new(
+    // Register metadata functions - these should not take parameters
+    register_function(GuestFunctionDefinition::new(
+        constants::GuestMethod::GetName.as_ref().to_string(),
+        Vec::new(),
+        ReturnType::String,
+        guest_get_name as usize,
+    ));
+
+    register_function(GuestFunctionDefinition::new(
+        constants::GuestMethod::GetDescription.as_ref().to_string(),
+        Vec::new(),
+        ReturnType::String,
+        guest_get_description as usize,
+    ));
+
+    register_function(GuestFunctionDefinition::new(
+        constants::GuestMethod::GetParams.as_ref().to_string(),
+        Vec::new(),
+        ReturnType::String,
+        guest_get_params as usize,
+    ));
+
+    // Register callback function
+    register_function(GuestFunctionDefinition::new(
         AgentConstants::ProcessHttpResponse.as_ref().to_string(),
         Vec::from(&[ParameterType::String]),
         ReturnType::String,
         process_http_response as usize,
-    );
-    register_function(process_http_response_def);
-
-    let get_name_def = GuestFunctionDefinition::new(
-        constants::GuestMethod::GetName.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
-        ReturnType::String,
-        TopHNLinksAgent::get_name as usize,
-    );
-    register_function(get_name_def);
-
-    let get_description_def = GuestFunctionDefinition::new(
-        constants::GuestMethod::GetDescription.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
-        ReturnType::String,
-        TopHNLinksAgent::get_description as usize,
-    );
-    register_function(get_description_def);
-
-    let get_params_def = GuestFunctionDefinition::new(
-        constants::GuestMethod::GetParams.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
-        ReturnType::String,
-        TopHNLinksAgent::get_params as usize,
-    );
-    register_function(get_params_def);
+    ));
 }
 
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub fn guest_dispatch_function(function_call: FunctionCall) -> Result<Vec<u8>> {
     Err(HyperlightGuestError::new(
         ErrorCode::GuestFunctionNotFound,
         function_call.function_name.clone(),
     ))
 }
+
+
