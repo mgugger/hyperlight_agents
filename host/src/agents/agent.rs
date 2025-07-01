@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use hyperlight_host::sandbox::{ExtraAllowedSyscall, SandboxConfiguration};
+use hyperlight_host::sandbox::SandboxConfiguration;
 use hyperlight_host::sandbox_state::sandbox::EvolvableSandbox;
 use hyperlight_host::sandbox_state::transition::Noop;
 use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
@@ -299,7 +299,7 @@ pub fn register_host_functions(
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let response = rt.block_on(async {
                     match vm_manager
-                        .execute_command_in_vm(
+                        .execute_vm_command(
                             &vm_id,
                             command,
                             Vec::new(),
