@@ -5,8 +5,8 @@ extern crate alloc;
 
 use alloc::format;
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 use hyperlight_agents_common::constants;
 use hyperlight_common::flatbuffer_wrappers::function_call::FunctionCall;
 use hyperlight_common::flatbuffer_wrappers::function_types::{
@@ -52,7 +52,7 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
             let command =
                 parse_json_param(json_params, "command").unwrap_or_else(|| "".to_string());
 
-            let res: Result<()> = match action.as_str() {
+            let res: Result<String> = match action.as_str() {
                 "create_vm" => {
                     let params = vec![
                         ParameterValue::String(vm_id),
@@ -60,7 +60,7 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
                             AgentConstants::ProcessVmCreationResult.as_ref().to_string(),
                         ),
                     ];
-                    call_host_function::<()>(
+                    call_host_function::<String>(
                         constants::HostMethod::CreateVM.as_ref(),
                         Some(params),
                         ReturnType::String,
@@ -74,7 +74,7 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
                             AgentConstants::ProcessVmCommandResult.as_ref().to_string(),
                         ),
                     ];
-                    call_host_function::<()>(
+                    call_host_function::<String>(
                         constants::HostMethod::ExecuteVMCommand.as_ref(),
                         Some(params),
                         ReturnType::String,
@@ -87,7 +87,7 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
                             AgentConstants::ProcessVmDestructionResult.as_ref().to_string(),
                         )
                     ];
-                    call_host_function::<()>(
+                    call_host_function::<String>(
                         constants::HostMethod::DestroyVM.as_ref(),
                         Some(params),
                         ReturnType::String,
@@ -100,9 +100,9 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
                             AgentConstants::ProcessVmListResult.as_ref().to_string(),
                         )
                     ];
-                    call_host_function::<()>(
-                        constants::HostMethod::ListVMs.as_ref(), 
-                        Some(params), 
+                    call_host_function::<String>(
+                        constants::HostMethod::ListVMs.as_ref(),
+                        Some(params),
                         ReturnType::String
                     )
                 },
@@ -111,14 +111,10 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
                     format!("VM action invalid, must be one of: create_vm, execute_vm_command, destroy_vm, list_vms. Got {:?}", action).to_string(),
                 )),
             };
-            
+
             match res {
-                Ok(_) => Ok(get_flatbuffer_result(
-                    format!(
-                        "VM operation OK: {:?}",
-                        action
-                    )
-                    .as_str(),
+                Ok(response) => Ok(get_flatbuffer_result(
+                    format!("VM operation OK: {:?} - {}", action, response).as_str(),
                 )),
                 Err(e) => Ok(get_flatbuffer_result(
                     format!("VM operation failed {:?}", e).as_str(),
@@ -179,14 +175,14 @@ fn send_message_to_host_method(
     callback_function: &str,
 ) -> Result<Vec<u8>> {
     let message = format!("{}{}", guest_message, message);
-    
-    let _res = call_host_function::<String>(
+
+    let _res = call_host_function::<()>(
         method_name,
         Some(Vec::from(&[
             ParameterValue::String(message.to_string()),
             ParameterValue::String(callback_function.to_string()),
         ])),
-        ReturnType::String,
+        ReturnType::Void,
     )?;
 
     Ok(get_flatbuffer_result("Success"))
@@ -312,7 +308,9 @@ pub extern "C" fn hyperlight_main() {
     ));
 
     register_function(GuestFunctionDefinition::new(
-        AgentConstants::ProcessVmDestructionResult.as_ref().to_string(),
+        AgentConstants::ProcessVmDestructionResult
+            .as_ref()
+            .to_string(),
         Vec::from(&[ParameterType::String]),
         ReturnType::String,
         process_vm_destruction_result as usize,
@@ -333,5 +331,3 @@ pub fn guest_dispatch_function(function_call: FunctionCall) -> Result<Vec<u8>> {
         function_call.function_name.clone(),
     ))
 }
-
-

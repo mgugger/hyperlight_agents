@@ -33,7 +33,7 @@ fn send_message_to_host_method(
     callback_function: &str,
 ) -> Result<Vec<u8>> {
     let message = format!("{}{}", guest_message, message);
-    
+
     let _res = call_host_function::<String>(
         method_name,
         Some(Vec::from(&[
@@ -97,11 +97,14 @@ fn guest_get_name(_function_call: &FunctionCall) -> Result<Vec<u8>> {
 }
 
 fn guest_get_description(_function_call: &FunctionCall) -> Result<Vec<u8>> {
-    Ok(get_flatbuffer_result("An Agent that returns the current Top Hacker News Links"))
+    Ok(get_flatbuffer_result(
+        "An Agent that returns the current Top Hacker News Links",
+    ))
 }
 
 fn guest_get_params(_function_call: &FunctionCall) -> Result<Vec<u8>> {
-    let params_json = r#"[{"name": "url", "description": "URL to fetch", "type": "string", "required": false}]"#;
+    let params_json =
+        r#"[{"name": "url", "description": "URL to fetch", "type": "string", "required": false}]"#;
     Ok(get_flatbuffer_result(params_json))
 }
 
@@ -153,5 +156,3 @@ pub fn guest_dispatch_function(function_call: FunctionCall) -> Result<Vec<u8>> {
         function_call.function_name.clone(),
     ))
 }
-
-
