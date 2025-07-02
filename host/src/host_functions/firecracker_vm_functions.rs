@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use vsock::{VsockListener, VsockStream};
 // Add these imports for process management and signal handling
+use memfd::MemfdOptions;
 use std::fs::File;
+use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct VmInstance {
@@ -21,6 +23,8 @@ pub struct VmInstance {
     pub temp_dir: TempDir,
     pub command_sender: mpsc::Sender<VmCommand>,
     pub result_receiver: Arc<Mutex<HashMap<String, mpsc::Sender<VmCommandResult>>>>,
+    pub memfd_rootfs: Option<memfd::Memfd>, // Keep memfd alive
+    pub rootfs_symlink: Option<PathBuf>,    // Path to the symlink
 }
 
 #[derive(Debug, Clone)]
@@ -190,7 +194,8 @@ impl VmManager {
         let (command_sender, command_receiver) = mpsc::channel::<VmCommand>();
 
         // Start the Firecracker VM using real images from vm-images directory
-        let vm_process = self.start_firecracker_vm(&temp_dir.path(), cid)?;
+        let (vm_process, memfd_rootfs, rootfs_symlink) =
+            self.start_firecracker_vm(&temp_dir.path(), &vm_id, cid)?;
 
         let vm_instance = VmInstance {
             vm_id: vm_id.clone(),
@@ -199,6 +204,8 @@ impl VmManager {
             temp_dir,
             command_sender,
             result_receiver: Arc::new(Mutex::new(HashMap::new())),
+            memfd_rootfs,
+            rootfs_symlink,
         };
 
         // Store the VM instance
@@ -216,12 +223,16 @@ impl VmManager {
     fn start_firecracker_vm(
         &self,
         vm_dir: &Path,
+        vm_id: &str,
         cid: u32,
-    ) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<
+        (Option<u32>, Option<memfd::Memfd>, Option<PathBuf>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         // Always use the real images from vm-images directory
         let vm_images_dir = Path::new("/home/manuel/git/hyperlight_agents/vm-images");
         let kernel_path = vm_images_dir.join("vmlinux");
-        let rootfs_path = vm_images_dir.join("rootfs.ext4");
+        let source_rootfs_path = vm_images_dir.join("rootfs.ext4");
         let config_path = vm_dir.join("firecracker-config.json");
 
         // Verify that the real images exist
@@ -230,13 +241,22 @@ impl VmManager {
                 format!("Real kernel image not found at: {}", kernel_path.display()).into(),
             );
         }
-        if !rootfs_path.exists() {
-            return Err(
-                format!("Real rootfs image not found at: {}", rootfs_path.display()).into(),
-            );
+        if !source_rootfs_path.exists() {
+            return Err(format!(
+                "Real rootfs image not found at: {}",
+                source_rootfs_path.display()
+            )
+            .into());
         }
 
-        // Create Firecracker configuration using real images
+        // Create in-memory rootfs using memfd
+        let (memfd_rootfs, rootfs_path) = self.create_memfd_rootfs(&source_rootfs_path, vm_id)?;
+        println!(
+            "✓ Successfully created in-memory rootfs using memfd for VM {}",
+            vm_id
+        );
+
+        // Create Firecracker configuration using in-memory rootfs
         let config = serde_json::json!({
             "boot-source": {
                 "kernel_image_path": kernel_path.to_str().unwrap(),
@@ -262,16 +282,16 @@ impl VmManager {
         std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
 
         // Log what we're using
-        println!("Starting Firecracker VM with real images:");
+        println!("Starting Firecracker VM {} with in-memory rootfs:", vm_id);
         println!(
             "  Kernel: {} ({} bytes)",
             kernel_path.display(),
             std::fs::metadata(&kernel_path)?.len()
         );
         println!(
-            "  Rootfs: {} ({} bytes)",
+            "  In-memory rootfs: {} (original: {} bytes)",
             rootfs_path.display(),
-            std::fs::metadata(&rootfs_path)?.len()
+            std::fs::metadata(&source_rootfs_path)?.len()
         );
         println!("  Config: {}", config_path.display());
         println!("  Guest CID: {}", cid);
@@ -282,7 +302,7 @@ impl VmManager {
                 println!("Simulating Firecracker VM start for testing");
                 println!("  VM would be started with CID: {}", cid);
                 println!("  VSOCK socket would be: {}/vsock.sock", vm_dir.display());
-                Ok(Some(12345)) // Fake PID
+                Ok((Some(12345), Some(memfd_rootfs), Some(rootfs_path))) // Fake PID
             }
             Err(_) => {
                 // Try to start real Firecracker
@@ -318,16 +338,74 @@ impl VmManager {
                             std::path::Path::new(&vsock_path).exists()
                         );
 
-                        Ok(Some(child.id()))
+                        Ok((Some(child.id()), Some(memfd_rootfs), Some(rootfs_path)))
                     }
                     Err(e) => {
                         eprintln!("Failed to start Firecracker VM: {}", e);
                         println!("To skip Firecracker, set SKIP_FIRECRACKER=1");
-                        Ok(None)
+                        Ok((None, Some(memfd_rootfs), Some(rootfs_path)))
                     }
                 }
             }
         }
+    }
+
+    fn create_memfd_rootfs(
+        &self,
+        source_rootfs: &Path,
+        vm_id: &str,
+    ) -> Result<(memfd::Memfd, PathBuf), Box<dyn std::error::Error + Send + Sync>> {
+        println!("Creating in-memory rootfs for VM {}", vm_id);
+
+        // Create anonymous memory file
+        let memfd = MemfdOptions::default()
+            .close_on_exec(false)
+            .create(&format!("hyperlight_rootfs_{}", vm_id))?;
+
+        // Copy data from source rootfs to memfd
+        let mut source_file = std::fs::File::open(source_rootfs)?;
+        let mut memfd_file = memfd.as_file();
+        let bytes_copied = std::io::copy(&mut source_file, &mut memfd_file)?;
+
+        println!(
+            "✓ Copied {} bytes to memfd for VM {} ({:.2} MB)",
+            bytes_copied,
+            vm_id,
+            bytes_copied as f64 / 1024.0 / 1024.0
+        );
+
+        // Create a symlink in /tmp pointing to the memfd via /proc/self/fd/
+        let proc_path = format!("/proc/self/fd/{}", memfd.as_raw_fd());
+        let symlink_path = PathBuf::from(format!("/tmp/hyperlight_rootfs_{}.ext4", vm_id));
+
+        // Remove existing symlink if it exists
+        if symlink_path.exists() {
+            std::fs::remove_file(&symlink_path)?;
+        }
+
+        std::os::unix::fs::symlink(&proc_path, &symlink_path)?;
+
+        println!(
+            "✓ Created symlink {} -> {} for VM {}",
+            symlink_path.display(),
+            proc_path,
+            vm_id
+        );
+
+        // Verify the symlink works by checking its metadata
+        match std::fs::metadata(&symlink_path) {
+            Ok(metadata) => {
+                println!(
+                    "✓ Memfd symlink verified: {} bytes accessible",
+                    metadata.len()
+                );
+            }
+            Err(e) => {
+                eprintln!("⚠ Warning: Could not verify memfd symlink: {}", e);
+            }
+        }
+
+        Ok((memfd, symlink_path))
     }
 
     fn start_command_processor(
@@ -963,6 +1041,18 @@ impl VmManager {
                     .output();
             }
 
+            // Clean up memfd rootfs symlink
+            if let Some(symlink_path) = &vm_instance.rootfs_symlink {
+                if symlink_path.exists() {
+                    if let Err(e) = std::fs::remove_file(symlink_path) {
+                        eprintln!("Failed to remove rootfs symlink for VM {}: {}", vm_id, e);
+                    } else {
+                        println!("Cleaned up rootfs symlink for VM {}", vm_id);
+                    }
+                }
+            }
+
+            // The memfd will be automatically closed when vm_instance.memfd_rootfs is dropped
             // The temporary directory will be automatically cleaned up when the TempDir is dropped
             Ok(format!("VM {} destroyed successfully", vm_id))
         } else {
