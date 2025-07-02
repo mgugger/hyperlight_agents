@@ -134,7 +134,7 @@ impl VmManager {
                             }
                             Some("command_result") => {
                                 // VM sending command execution result
-                                println!("Received command result: {}", message);
+                                println!("Received command result");
 
                                 // Parse the command result
                                 let cmd_result = VmCommandResult {
