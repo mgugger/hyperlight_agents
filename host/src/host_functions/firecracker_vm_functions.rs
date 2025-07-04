@@ -258,7 +258,7 @@ impl VmManager {
         let config = serde_json::json!({
             "boot-source": {
                 "kernel_image_path": kernel_path.to_str().unwrap(),
-                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init"
+                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init root=/dev/vda rw"
             },
             "drives": [{
                 "drive_id": "rootfs",

@@ -1,31 +1,11 @@
 # Use Alpine as a small base image
 FROM alpine:latest
 
-# Install essential packages including bash, git, curl, and build tools
+# Install only essential runtime packages
 RUN apk update && apk add --no-cache \
     bash \
-    git \
-    curl \
-    build-base \
     ca-certificates \
-    openssl \
-    openssl-dev \
-    musl-dev \
-    gcc \
-    libc6-compat
-
-# Install rustup and the default Rust toolchain non-interactively
-# This also adds ~/.cargo/bin to the PATH for the root user
-#RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-# Set the PATH environment variable to include cargo's bin directory
-# This makes `rustc` and `cargo` available directly
-#ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Verify installations
-#RUN git --version && \
-#    rustc --version && \
-#    cargo --version
+    openssl
 
 # Copy the pre-built vm-agent binary
 COPY vm-agent /usr/bin/vm-agent
