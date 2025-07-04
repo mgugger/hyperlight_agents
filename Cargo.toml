@@ -1,18 +1,8 @@
 [workspace]
 resolver = "2"
-members = [
-    "hyperlight_agents_common",
-    "guest", 
-    "host",
-    "vm-agent"
-]
-
-# Default configuration for all members
-default-members = [
-    "hyperlight_agents_common",
-    "guest",
-    "host"
-]
+members = ["hyperlight_agents_common", "host", "xtask"]
+exclude = ["guest", "vm-agent"]
+default-members = ["hyperlight_agents_common", "host", "xtask"]
 
 # Default dependency versions for the workspace
 [workspace.dependencies]
@@ -22,7 +12,10 @@ hyperlight-guest-bin = { version = "0.7.0" }
 hyperlight-common = { version = "0.7.0", default-features = false }
 hyperlight-agents-common = { path = "./hyperlight_agents_common", version = "0.1.0" }
 
-serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+serde = { version = "1.0", default-features = false, features = [
+    "alloc",
+    "derive",
+] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 strum = { version = "0.27", default-features = false, features = ["derive"] }
 strum_macros = "0.27"
@@ -43,14 +36,13 @@ opt-level = 0
 # Workspace metadata for build tools
 [workspace.metadata]
 # Build order for dependencies
-build-order = [
-    "hyperlight_agents_common",
-    "guest",
-    "host",
-    "vm-agent"
-]
+build-order = ["hyperlight_agents_common", "host"]
 
 # Special build instructions for vm-agent
 [workspace.metadata.vm-agent]
 target = "x86_64-unknown-linux-musl"
 profile = "release"
+
+# Note: For convenient aliases, you can create a .cargo/config.toml in your home directory:
+# [alias]
+# x = "run -p xtask --"

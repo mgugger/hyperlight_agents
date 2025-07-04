@@ -2,20 +2,6 @@
 # Default target for the workspace
 # target = "x86_64-unknown-linux-gnu"  # Commented out to use system default
 
-[target.x86_64-unknown-linux-musl]
-# Configuration for musl target (used by vm-agent)
-rustflags = ["-C", "target-feature=+crt-static"]
-
-[target.x86_64-unknown-none]
-# Configuration for hyperlight guest binaries
-rustflags = [
-  "-C",
-  "code-model=small",
-  "-C", 
-  "link-args=-eentrypoint",
-]
-linker = "rust-lld"
-
 # Alias configurations for common commands
 [alias]
 # Build all components in the correct order
@@ -24,20 +10,8 @@ build-all = "build --workspace"
 # Build for release
 build-release = "build --workspace --release"
 
-# Build just the VM agent with musl target
-build-vm-agent = "build -p vm-agent --target x86_64-unknown-linux-musl --release"
-
-# Build guest agents for hyperlight
-build-guests = "build -p hyperlight-agents-guest --target x86_64-unknown-none"
-build-guest-release = "build -p hyperlight-agents-guest --target x86_64-unknown-none --release"
-
-# Build specific guest binaries
-build-tophn = "build -p hyperlight-agents-guest --target x86_64-unknown-none --bin top_hn_links"
-build-vmbuilder = "build -p hyperlight-agents-guest --target x86_64-unknown-none --bin vm_builder"
-build-minimal = "build -p hyperlight-agents-guest --target x86_64-unknown-none --bin ultra_minimal"
-
 # Build all except vm-agent (for quick iteration)
-build-main = "build -p hyperlight-agents-common -p hyperlight-agents-guest -p hyperlight-agents-host"
+build-main = "build -p hyperlight-agents-common -p hyperlight-agents-host"
 
 # Run the host application
 run-host = "run -p hyperlight-agents-host"

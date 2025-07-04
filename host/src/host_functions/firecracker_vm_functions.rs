@@ -54,12 +54,10 @@ pub struct VmManager {
 
 impl VmManager {
     pub fn new() -> Self {
-        let firecracker_available = Command::new(
-            "/home/manuel/firecracker/release-v1.12.1-x86_64/firecracker-v1.12.1-x86_64",
-        )
-        .arg("--version")
-        .output()
-        .is_ok();
+        let firecracker_available = Command::new("firecracker/firecracker")
+            .arg("--version")
+            .output()
+            .is_ok();
         if !firecracker_available {
             panic!("Firecracker not detected");
         } else {
@@ -193,7 +191,7 @@ impl VmManager {
         // Create command channel for this VM
         let (command_sender, command_receiver) = mpsc::channel::<VmCommand>();
 
-        // Start the Firecracker VM using real images from vm-images directory
+        // Start the Firecracker VM using real images from firecracker directory
         let (vm_process, memfd_rootfs, rootfs_symlink) =
             self.start_firecracker_vm(&temp_dir.path(), &vm_id, cid)?;
 
@@ -229,8 +227,8 @@ impl VmManager {
         (Option<u32>, Option<memfd::Memfd>, Option<PathBuf>),
         Box<dyn std::error::Error + Send + Sync>,
     > {
-        // Always use the real images from vm-images directory
-        let vm_images_dir = Path::new("/home/manuel/git/hyperlight_agents/vm-images");
+        // Always use the real images from firecracker directory
+        let vm_images_dir = Path::new("firecracker");
         let kernel_path = vm_images_dir.join("vmlinux");
         let source_rootfs_path = vm_images_dir.join("rootfs.ext4");
         let config_path = vm_dir.join("firecracker-config.json");
@@ -260,7 +258,7 @@ impl VmManager {
         let config = serde_json::json!({
             "boot-source": {
                 "kernel_image_path": kernel_path.to_str().unwrap(),
-                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init"
             },
             "drives": [{
                 "drive_id": "rootfs",
@@ -307,16 +305,14 @@ impl VmManager {
             Err(_) => {
                 // Try to start real Firecracker
 
-                let devnull = File::create("/dev/null").unwrap();
-                let mut cmd = Command::new(
-                    "/home/manuel/firecracker/release-v1.12.1-x86_64/firecracker-v1.12.1-x86_64",
-                );
+                //let devnull = File::create("/dev/null").unwrap();
+                let mut cmd = Command::new("firecracker/firecracker");
                 cmd.arg("--api-sock")
                     .arg(format!("{}/firecracker.sock", vm_dir.display()))
                     .arg("--config-file")
-                    .arg(&config_path)
-                    .stdout(devnull.try_clone().unwrap())
-                    .stderr(devnull);
+                    .arg(&config_path);
+                //.stdout(devnull.try_clone().unwrap())
+                //.stderr(devnull);
 
                 println!(
                     "Starting Firecracker with config: {}",

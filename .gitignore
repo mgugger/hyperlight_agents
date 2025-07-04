@@ -1,7 +1,7 @@
-/vm-images/rootfs.ext4
-/vm-images/rootfs.ext4.backup
-/vm-images/vmlinux*
-
+/firecracker/rootfs.ext4
+/firecracker/rootfs.ext4.backup
+/firecracker/vmlinux*
+/firecracker/firecracker
 # Exclude build artifacts and target directories
 **/target/
 target/
