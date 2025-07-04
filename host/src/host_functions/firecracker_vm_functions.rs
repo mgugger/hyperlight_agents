@@ -305,14 +305,14 @@ impl VmManager {
             Err(_) => {
                 // Try to start real Firecracker
 
-                //let devnull = File::create("/dev/null").unwrap();
+                let devnull = File::create("/dev/null").unwrap();
                 let mut cmd = Command::new("firecracker/firecracker");
                 cmd.arg("--api-sock")
                     .arg(format!("{}/firecracker.sock", vm_dir.display()))
                     .arg("--config-file")
-                    .arg(&config_path);
-                //.stdout(devnull.try_clone().unwrap())
-                //.stderr(devnull);
+                    .arg(&config_path)
+                    .stdout(devnull.try_clone().unwrap())
+                    .stderr(devnull);
 
                 println!(
                     "Starting Firecracker with config: {}",
