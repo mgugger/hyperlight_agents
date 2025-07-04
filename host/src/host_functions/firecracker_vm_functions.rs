@@ -12,6 +12,8 @@ use tempfile::TempDir;
 use vsock::{VsockListener, VsockStream};
 // Add these imports for process management and signal handling
 use memfd::MemfdOptions;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,11 +47,44 @@ pub struct VmCommandResult {
     pub error: Option<String>,
 }
 
+// HTTP Proxy structures
+#[derive(Debug, Serialize, Deserialize)]
+struct HttpProxyRequest {
+    method: String,
+    url: String,
+    headers: HashMap<String, String>,
+    body: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct HttpProxyResponse {
+    status_code: u16,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+    error: Option<String>,
+}
+
+// Unified request/response for VSOCK communication
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum VsockRequest {
+    Command(serde_json::Value),
+    HttpProxy(HttpProxyRequest),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum VsockResponse {
+    Command(serde_json::Value),
+    HttpProxy(HttpProxyResponse),
+}
+
 pub struct VmManager {
     instances: Arc<Mutex<HashMap<String, VmInstance>>>,
     next_cid: Arc<Mutex<u32>>,
+    shutdown_flag: Arc<AtomicBool>,
     vsock_listener: Arc<Mutex<Option<VsockListener>>>,
-    shutting_down: Arc<AtomicBool>,
+    http_client: Arc<Client>,
 }
 
 impl VmManager {
@@ -63,9 +98,10 @@ impl VmManager {
         } else {
             Self {
                 instances: Arc::new(Mutex::new(HashMap::new())),
-                next_cid: Arc::new(Mutex::new(100)), // Start CIDs from 100
+                next_cid: Arc::new(Mutex::new(100)), // Start from CID 100
+                shutdown_flag: Arc::new(AtomicBool::new(false)),
                 vsock_listener: Arc::new(Mutex::new(None)),
-                shutting_down: Arc::new(AtomicBool::new(false)),
+                http_client: Arc::new(Client::new()),
             }
         }
     }
@@ -172,6 +208,206 @@ impl VmManager {
         }
 
         Ok(())
+    }
+
+    pub fn start_http_proxy_server(
+        &self,
+        port: u32,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // For guest-initiated connections, we need to listen on a Unix domain socket
+        // at the path: <vsock_socket_path>_<port>
+        // We'll need to get the VSOCK socket path from the VM instances
+        let instances = self.instances.clone();
+        let http_client = self.http_client.clone();
+        let shutdown_flag = self.shutdown_flag.clone();
+
+        thread::spawn(move || {
+            // Wait for VM instances to be available to get socket path
+            loop {
+                if shutdown_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                let socket_path = {
+                    let instances_guard = instances.lock().unwrap();
+                    if let Some((_, vm_instance)) = instances_guard.iter().next() {
+                        // Construct the socket path for guest-initiated connections
+                        let base_path = vm_instance.temp_dir.path().join("vsock.sock");
+                        Some(format!("{}_{}", base_path.display(), port))
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(socket_path) = socket_path {
+                    println!(
+                        "HTTP Proxy server will listen on Unix socket: {}",
+                        socket_path
+                    );
+
+                    if let Err(e) = Self::run_http_proxy_unix_server(
+                        &socket_path,
+                        http_client.clone(),
+                        shutdown_flag.clone(),
+                    ) {
+                        eprintln!("HTTP proxy Unix server error: {}", e);
+                    }
+                    break;
+                } else {
+                    // Wait for VM instances to be created
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    fn run_http_proxy_unix_server(
+        socket_path: &str,
+        http_client: Arc<Client>,
+        shutdown_flag: Arc<AtomicBool>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use std::os::unix::net::UnixListener;
+
+        // Remove socket file if it exists
+        let _ = std::fs::remove_file(socket_path);
+
+        let listener = UnixListener::bind(socket_path)?;
+        println!(
+            "HTTP Proxy VSOCK server listening on Unix socket: {}",
+            socket_path
+        );
+
+        for stream in listener.incoming() {
+            if shutdown_flag.load(Ordering::Relaxed) {
+                break;
+            }
+
+            match stream {
+                Ok(mut stream) => {
+                    let client = http_client.clone();
+                    thread::spawn(move || {
+                        if let Err(e) = Self::handle_http_proxy_unix_connection(&mut stream, client)
+                        {
+                            eprintln!("Error handling HTTP proxy Unix connection: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Error accepting HTTP proxy Unix connection: {}", e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_http_proxy_unix_connection(
+        stream: &mut UnixStream,
+        http_client: Arc<Client>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut buffer = [0; 8192];
+        let mut total_message = String::new();
+
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break, // Connection closed
+                Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&buffer[..n]);
+                    total_message.push_str(&chunk);
+
+                    // Try to parse as complete JSON
+                    if let Ok(vsock_request) = serde_json::from_str::<VsockRequest>(&total_message)
+                    {
+                        if let VsockRequest::HttpProxy(proxy_request) = vsock_request {
+                            // Handle HTTP proxy request
+                            let response = Self::execute_http_request(proxy_request, &http_client);
+                            let vsock_response = VsockResponse::HttpProxy(response);
+                            let response_json = serde_json::to_string(&vsock_response)?;
+
+                            stream.write_all(response_json.as_bytes())?;
+                            stream.flush()?;
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error reading from HTTP proxy Unix stream: {}", e);
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn execute_http_request(
+        proxy_request: HttpProxyRequest,
+        http_client: &Client,
+    ) -> HttpProxyResponse {
+        // Block on async operation
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let method = match proxy_request.method.to_uppercase().as_str() {
+                "GET" => reqwest::Method::GET,
+                "POST" => reqwest::Method::POST,
+                "PUT" => reqwest::Method::PUT,
+                "DELETE" => reqwest::Method::DELETE,
+                "HEAD" => reqwest::Method::HEAD,
+                "OPTIONS" => reqwest::Method::OPTIONS,
+                "PATCH" => reqwest::Method::PATCH,
+                _ => reqwest::Method::GET,
+            };
+
+            let mut request_builder = http_client.request(method, &proxy_request.url);
+
+            // Add headers
+            for (name, value) in &proxy_request.headers {
+                request_builder = request_builder.header(name, value);
+            }
+
+            // Add body if present
+            if let Some(body_data) = proxy_request.body {
+                request_builder = request_builder.body(body_data);
+            }
+
+            match request_builder.send().await {
+                Ok(response) => {
+                    let status_code = response.status().as_u16();
+
+                    // Extract headers
+                    let mut headers = HashMap::new();
+                    for (name, value) in response.headers().iter() {
+                        if let Ok(value_str) = value.to_str() {
+                            headers.insert(name.to_string(), value_str.to_string());
+                        }
+                    }
+
+                    // Get response body
+                    match response.bytes().await {
+                        Ok(body_bytes) => HttpProxyResponse {
+                            status_code,
+                            headers,
+                            body: body_bytes.to_vec(),
+                            error: None,
+                        },
+                        Err(e) => HttpProxyResponse {
+                            status_code: 500,
+                            headers: HashMap::new(),
+                            body: Vec::new(),
+                            error: Some(format!("Failed to read response body: {}", e)),
+                        },
+                    }
+                }
+                Err(e) => HttpProxyResponse {
+                    status_code: 500,
+                    headers: HashMap::new(),
+                    body: Vec::new(),
+                    error: Some(format!("HTTP request failed: {}", e)),
+                },
+            }
+        })
     }
 
     pub async fn create_vm(
@@ -411,7 +647,7 @@ impl VmManager {
         _cid: u32,
     ) {
         let instances = self.instances.clone();
-        let shutting_down = self.shutting_down.clone();
+        let shutting_down = self.shutdown_flag.clone();
 
         thread::spawn(move || {
             for command in receiver {
@@ -636,7 +872,16 @@ impl VmManager {
                                     if !response_buffer.is_empty() {
                                         if let Ok(response_str) = String::from_utf8(response_buffer)
                                         {
-                                            println!("Response: {}", response_str);
+                                            // Limit debug output to prevent stdout overflow
+                                            if response_str.len() > 1000 {
+                                                println!(
+                                                    "Response: {}... (truncated, {} bytes total)",
+                                                    &response_str[..1000],
+                                                    response_str.len()
+                                                );
+                                            } else {
+                                                println!("Response: {}", response_str);
+                                            }
 
                                             if let Ok(response_json) =
                                                 serde_json::from_str::<serde_json::Value>(
@@ -1333,7 +1578,7 @@ impl VmManager {
     // Add shutdown method to cleanly terminate all VMs
     pub fn shutdown(&self) {
         println!("Shutting down VM Manager...");
-        self.shutting_down.store(true, Ordering::SeqCst);
+        self.shutdown_flag.store(true, Ordering::SeqCst);
 
         // Get all VM instances PIDs and IDs
         let vm_pids: Vec<(String, Option<u32>)> = {
@@ -1470,7 +1715,7 @@ impl VmManager {
 // Implement Drop trait for VmManager as a fallback cleanup
 impl Drop for VmManager {
     fn drop(&mut self) {
-        if !self.shutting_down.load(Ordering::SeqCst) {
+        if !self.shutdown_flag.load(Ordering::SeqCst) {
             println!("VmManager dropped without explicit shutdown, cleaning up...");
             self.shutdown();
         }

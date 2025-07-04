@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use host_functions::firecracker_vm_functions::VmManager;
 use mcp::mcp_server;
@@ -27,12 +27,19 @@ async fn main() -> hyperlight_host::Result<()> {
             .unwrap(),
     );
 
-    // Create VM manager and start VSOCK server
+    // Create VM manager and start VSOCK servers
     let vm_manager = Arc::new(VmManager::new());
     if let Err(e) = vm_manager.start_vsock_server(1234) {
         eprintln!("Failed to start VSOCK server: {}", e);
     } else {
         println!("VSOCK server started on port 1234");
+    }
+
+    // Start HTTP proxy VSOCK server
+    if let Err(e) = vm_manager.start_http_proxy_server(1235) {
+        eprintln!("Failed to start HTTP proxy VSOCK server: {}", e);
+    } else {
+        println!("HTTP proxy VSOCK server started on port 1235");
     }
 
     let agent_ids: Vec<String> = std::fs::read_dir("./../target/x86_64-unknown-none/debug/")
@@ -113,10 +120,10 @@ async fn main() -> hyperlight_host::Result<()> {
     // Start the MCP server with the rust-mcp-sdk (now async)
     // Create a clone of vm_manager for cleanup
     let vm_manager_cleanup = vm_manager.clone();
-    
+
     // Create a cancellation token for the server
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    
+
     let server_handle = tokio::spawn(async move {
         // Run the server in a select with the shutdown signal
         tokio::select! {
@@ -142,16 +149,16 @@ async fn main() -> hyperlight_host::Result<()> {
         }
         _ = tokio::signal::ctrl_c() => {
             println!("Received Ctrl+C, shutting down gracefully...");
-            
+
             // Send shutdown signal to the server
             let _ = shutdown_tx.send(());
-            
+
             // Give the server a moment to shut down gracefully
             tokio::time::sleep(Duration::from_millis(500)).await;
-            
+
             // Abort the server task if it's still running
             abort_handle.abort();
-            
+
             println!("MCP server shutdown initiated");
         }
     }
@@ -159,7 +166,7 @@ async fn main() -> hyperlight_host::Result<()> {
     // Perform cleanup
     println!("Shutting down VM Manager...");
     vm_manager_cleanup.shutdown();
-    
+
     // Perform emergency cleanup as well
     VmManager::emergency_cleanup();
 

@@ -5,7 +5,9 @@ FROM alpine:latest
 RUN apk update && apk add --no-cache \
     bash \
     ca-certificates \
-    openssl
+    openssl \
+    curl \
+    iproute2
 
 # Copy the pre-built vm-agent binary
 COPY vm-agent /usr/bin/vm-agent

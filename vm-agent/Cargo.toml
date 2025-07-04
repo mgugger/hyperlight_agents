@@ -9,9 +9,16 @@ edition = "2021"
 serde = { version = "1.0", default-features = false, features = [
     "alloc",
     "derive",
+    "std",
 ] }
-serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde_json = { version = "1.0", default-features = false, features = [
+    "alloc",
+    "std",
+] }
 vsock = "0.4"
+tokio = { version = "1.0", features = ["full"] }
+hyper = { version = "0.14", features = ["full"] }
+futures = "0.3"
 
 [[bin]]
 name = "vm-agent"
