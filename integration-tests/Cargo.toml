@@ -1,0 +1,16 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+xtask = { path = "../xtask" }
+
+async-trait = "0.1"
+serde_json = "1.0"
+
+rust-mcp-sdk = { version = "0.5", features = ["client"] }
+hyperlight-agents-common = { path = "../hyperlight_agents_common" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

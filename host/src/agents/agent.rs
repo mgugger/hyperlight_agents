@@ -7,8 +7,8 @@ use hyperlight_host::sandbox_state::sandbox::EvolvableSandbox;
 use hyperlight_host::sandbox_state::transition::Noop;
 use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
 
-use crate::host_functions::firecracker_vm_functions::VmManager;
 use crate::host_functions::network_functions::http_request;
+use crate::host_functions::vm_functions::VmManager;
 use crate::mcp_server::{MCP_AGENT_REQUEST_IDS, MCP_RESPONSE_CHANNELS};
 use hyperlight_agents_common::constants;
 use reqwest::Client;

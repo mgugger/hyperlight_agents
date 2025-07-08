@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["hyperlight_agents_common", "host", "xtask"]
+members = ["hyperlight_agents_common", "host", "xtask", "integration-tests"]
 exclude = ["guest", "vm-agent"]
 default-members = ["hyperlight_agents_common", "host", "xtask"]
 

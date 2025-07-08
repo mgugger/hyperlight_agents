@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use host_functions::firecracker_vm_functions::VmManager;
+use host_functions::vm_functions::VmManager;
 use mcp::mcp_server;
 
 mod agents;
