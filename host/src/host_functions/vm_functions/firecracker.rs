@@ -1,4 +1,4 @@
-use super::{log_listener, VmCommand, VmCommandResult, VmInstance, VmManager};
+use super::{VmCommand, VmCommandResult, VmInstance, VmManager};
 use chrono::Utc;
 use memfd::{Memfd, MemfdOptions};
 use serde_json::Value;

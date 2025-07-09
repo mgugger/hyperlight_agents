@@ -2,12 +2,7 @@
 target = "x86_64-unknown-none"
 
 [target.x86_64-unknown-none]
-rustflags = [
-  "-C",
-  "code-model=small",
-  "-C",
-  "link-args=-e entrypoint",
-]
+rustflags = ["-C", "code-model=small", "-C", "link-args=-e entrypoint"]
 linker = "rust-lld"
 
 [profile.release]

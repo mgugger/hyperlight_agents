@@ -201,16 +201,17 @@ fn build_guest(paths: &Paths) -> Result<()> {
         "📦".bright_blue()
     );
 
+    // hyperlight agents fail if built from another directory
     let output = Command::new("cargo")
         .args([
             "build",
-            "--manifest-path",
-            paths.guest_manifest_path.to_str().unwrap(),
-            "--target",
-            "x86_64-unknown-none",
-            "--release",
+            //"--manifest-path",
+            //paths.guest_manifest_path.to_str().unwrap(),
+            //"--target",
+            //"x86_64-unknown-none",
+            //"--release",
         ])
-        .current_dir(&paths.project_root)
+        .current_dir(&paths.project_root.join("guest"))
         .output()?;
 
     if !output.status.success() {

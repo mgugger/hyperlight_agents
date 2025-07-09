@@ -212,7 +212,7 @@ fn process_vm_command_result(function_call: &FunctionCall) -> Result<Vec<u8>> {
         if parameters.len() > 0 {
             if let Some(param) = parameters.get(0) {
                 if let ParameterValue::String(response) = param {
-                    let result_message = format!("VM Command Result: {}", response);
+                    let result_message = format!("{}", response);
                     return send_message_to_host_method(
                         constants::HostMethod::FinalResult.as_ref(),
                         result_message.as_str(),

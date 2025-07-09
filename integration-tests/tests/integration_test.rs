@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use rust_mcp_sdk::mcp_client::{client_runtime, ClientHandler};
+use rust_mcp_sdk::mcp_client::{client_runtime, ClientHandler, ClientRuntime};
 use rust_mcp_sdk::schema::{
     CallToolRequestParams, ClientCapabilities, ContentBlock, Implementation,
     InitializeRequestParams,
@@ -10,6 +10,7 @@ use std::io::{self};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -22,10 +23,10 @@ impl ClientHandler for MyClientHandler {
 
 /// Helper function to build the guest environment
 fn build_guest() -> io::Result<()> {
-    let root_dir = Path::new("../guest");
+    let root_dir = Path::new("../");
     let status = Command::new("cargo")
         .current_dir(root_dir)
-        .args(&["build", "--release"])
+        .args(&["run", "--bin", "xtask", "build-guest"])
         .status()?;
     if !status.success() {
         return Err(io::Error::new(
@@ -151,6 +152,32 @@ fn emergency_cleanup() -> io::Result<()> {
     Ok(())
 }
 
+async fn execute_command(client: &Arc<ClientRuntime>, command: &str) -> String {
+    let params =
+        json!({"action": "execute_vm_command", "vm_id": "integration_test_vm", "command": command})
+            .as_object()
+            .unwrap()
+            .clone();
+    let request = CallToolRequestParams {
+        name: "vm_builder".to_string(),
+        arguments: Some(params),
+    };
+    let result = client.call_tool(request).await;
+    match result {
+        Ok(res) => {
+            let output = match res.content.first() {
+                Some(ContentBlock::TextContent(content)) => content.text.clone(),
+                Some(_) => panic!("No content found"),
+                None => panic!("No content found"),
+            };
+            output
+        }
+        Err(e) => {
+            panic!("Failed to call tool: {}", e);
+        }
+    }
+}
+
 /// Integration test for the workspace
 #[tokio::test]
 async fn integration_test() {
@@ -162,35 +189,6 @@ async fn integration_test() {
 
     // Allow the host some time to initialize
     thread::sleep(Duration::from_secs(5));
-
-    // Step 3: Run MCP client and connect to the host MCP server
-    // Step 3.1: List tools on the MCP server
-    // async fn interact_with_mcp_server() -> SdkResult<()> {
-
-    //     println!("Available tools:");
-    //     for (index, tool) in tools.iter().enumerate() {
-    //         println!(
-    //             "{}. {}: {}",
-    //             index + 1,
-    //             tool.name,
-    //             tool.description.clone().unwrap_or_default()
-    //         );
-    //     }
-
-    //     let params = json!({"a": 100, "b": 28}).as_object().unwrap().clone();
-    //     let request = CallToolRequestParams {
-    //         name: "add".to_string(),
-    //         arguments: Some(params),
-    //     };
-    //     let result = client.call_tool(request).await?;
-    //     println!(
-    //         "Tool result: {}",
-    //         result.content.first().unwrap().as_text_content()?.text
-    //     );
-
-    //     Ok(())
-    // }
-    //
 
     let client_details = InitializeRequestParams {
         capabilities: ClientCapabilities::default(),
@@ -241,33 +239,36 @@ async fn integration_test() {
         }
     }
 
+    // let vm agent startup fully
+    thread::sleep(Duration::from_secs(5));
+
     // execute vm command
-    let params = json!({"action": "execute_vm_command", "vm_id": "integration_test_vm", "command": "curl http://www.google.com/generate_204"})
-        .as_object()
-        .unwrap()
-        .clone();
-    let request = CallToolRequestParams {
-        name: "vm_builder".to_string(),
-        arguments: Some(params),
-    };
-    let result = client.call_tool(request).await;
-    match result {
-        Ok(res) => {
-            let output = match res.content.first() {
-                Some(ContentBlock::TextContent(content)) => content.text.clone(),
-                Some(_) => panic!("No content found"),
-                None => panic!("No content found"),
-            };
-            assert!(
-                output.contains(""),
-                "Expected empty response, got {:?}",
-                output
-            )
-        }
-        Err(e) => {
-            panic!("Failed to call tool: {}", e);
-        }
-    }
+    let command = "free -m";
+    let res = execute_command(&client, command).await;
+    assert!(
+        res.contains("buff/cache"),
+        "Expected \"buff/cache\" response for command \"{}\", got {:?}",
+        command,
+        res
+    );
+    // test http call
+    let command = "curl http://www.google.com/generate_204";
+    let res = execute_command(&client, command).await;
+    assert!(
+        res == "",
+        "Expected empty response for command \"{}\", got {:?}",
+        command,
+        res
+    );
+    // test https call
+    let command = "curl https://www.google.com/generate_204";
+    let res = execute_command(&client, command).await;
+    assert!(
+        res == "",
+        "Expected empty response for command \"{}\", got {:?}",
+        command,
+        res
+    );
 
     // destroy vm
     let params = json!({"action": "destroy_vm", "vm_id": "integration_test_vm"})
