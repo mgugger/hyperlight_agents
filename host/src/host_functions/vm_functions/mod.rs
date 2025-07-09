@@ -1,14 +1,12 @@
-// hyperlight_agents/host/src/host_functions/vm_functions/mod.rs
-
 pub mod firecracker;
 pub mod http_proxy;
+pub mod log_listener;
 
-use chrono::Utc;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -128,6 +126,17 @@ impl VmManager {
         http_proxy::start_http_proxy_server_internal(
             self.instances.clone(),
             self.http_client.clone(),
+            self.shutdown_flag.clone(),
+            port,
+        )
+    }
+
+    pub fn start_log_listener_server(
+        &self,
+        port: u32,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        log_listener::start_log_listener_server(
+            self.instances.clone(),
             self.shutdown_flag.clone(),
             port,
         )

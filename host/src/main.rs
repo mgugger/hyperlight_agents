@@ -42,6 +42,13 @@ async fn main() -> hyperlight_host::Result<()> {
         println!("HTTP proxy VSOCK server started on port 1235");
     }
 
+    // Start HTTP proxy VSOCK server
+    if let Err(e) = vm_manager.start_log_listener_server(1236) {
+        eprintln!("Failed to start HTTP proxy VSOCK server: {}", e);
+    } else {
+        println!("HTTP proxy VSOCK server started on port 1236");
+    }
+
     let agent_ids: Vec<String> = std::fs::read_dir("./../target/x86_64-unknown-none/debug/")
         .or_else(|_| std::fs::read_dir("./target/x86_64-unknown-none/debug/"))
         .expect("Failed to read directory")

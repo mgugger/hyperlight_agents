@@ -1,4 +1,4 @@
-use super::{VmCommand, VmCommandResult, VmInstance, VmManager};
+use super::{log_listener, VmCommand, VmCommandResult, VmInstance, VmManager};
 use chrono::Utc;
 use memfd::{Memfd, MemfdOptions};
 use serde_json::Value;
@@ -94,7 +94,7 @@ pub(crate) fn start_firecracker_vm(
         }],
         "machine-config": {
             "vcpu_count": 1,
-            "mem_size_mib": 128,
+            "mem_size_mib": 256,
             "smt": false
         },
         "vsock": {

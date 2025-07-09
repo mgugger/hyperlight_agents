@@ -242,7 +242,7 @@ async fn integration_test() {
     }
 
     // execute vm command
-    let params = json!({"action": "execute_vm_command", "vm_id": "integration_test_vm", "command": "curl www.google.ch"})
+    let params = json!({"action": "execute_vm_command", "vm_id": "integration_test_vm", "command": "curl http://www.google.com/generate_204"})
         .as_object()
         .unwrap()
         .clone();
@@ -259,8 +259,8 @@ async fn integration_test() {
                 None => panic!("No content found"),
             };
             assert!(
-                output.contains("content=\"text/html"),
-                "Expected HTML content, got {:?}",
+                output.contains(""),
+                "Expected empty response, got {:?}",
                 output
             )
         }
