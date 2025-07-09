@@ -295,20 +295,39 @@ impl VmManager {
     }
 
     fn terminate_process(pid: u32, signal: &str) -> Result<(), std::io::Error> {
-        Command::new("kill")
+        let result = Command::new("kill")
             .arg(format!("-{}", signal))
             .arg(pid.to_string())
-            .status()
-            .map(|_| ())
+            .status();
+
+        match &result {
+            Ok(_) => println!("Successfully sent signal '{}' to process {}", signal, pid),
+            Err(e) => eprintln!(
+                "Failed to send signal '{}' to process {}: {:?}",
+                signal, pid, e
+            ),
+        }
+
+        result.map(|_| ())
     }
 
     fn is_process_running(pid: u32) -> bool {
-        Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        let result = Command::new("kill").arg("-0").arg(pid.to_string()).status();
+
+        match result {
+            Ok(status) if status.success() => {
+                println!("Process {} is running", pid);
+                true
+            }
+            Ok(_) => {
+                println!("Process {} is not running", pid);
+                false
+            }
+            Err(e) => {
+                eprintln!("Failed to check if process {} is running: {:?}", pid, e);
+                false
+            }
+        }
     }
 }
 

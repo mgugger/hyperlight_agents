@@ -1,13 +1,13 @@
 use async_trait::async_trait;
-use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::mcp_client::{client_runtime, ClientHandler};
 use rust_mcp_sdk::schema::{
     CallToolRequestParams, ClientCapabilities, ContentBlock, Implementation,
-    InitializeRequestParams, LATEST_PROTOCOL_VERSION,
+    InitializeRequestParams,
 };
 use rust_mcp_sdk::{ClientSseTransport, ClientSseTransportOptions, McpClient};
 use serde_json::json;
 use std::io::{self};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::thread;
@@ -39,17 +39,96 @@ fn build_guest() -> io::Result<()> {
 /// Helper function to start the host server
 fn start_host() -> io::Result<Child> {
     let root_dir = Path::new("../");
-    let child = Command::new("cargo")
+
+    // First, build the host executable to ensure it's up-to-date
+    println!("Building host executable...");
+    let build_status = Command::new("cargo")
         .current_dir(root_dir)
-        .args(&["run", "-p", "xtask", "--", "run-host"])
-        .spawn()?;
-    thread::sleep(Duration::from_secs(5)); // Allow host to initialize
+        .args(&["build", "--package", "hyperlight-agents-host"])
+        .status()?;
+
+    if !build_status.success() {
+        return Err(io::Error::new(io::ErrorKind::Other, "Failed to build host"));
+    }
+    println!("Host executable built successfully.");
+
+    // Then, run the built executable
+    let host_executable = Path::new("./target/debug/hyperlight-agents-host");
+    let mut command = Command::new(host_executable);
+    command.current_dir(root_dir);
+
+    // Create a new process group for the child process to ensure that signals
+    // are correctly propagated to the host and its subprocesses.
+    unsafe {
+        command.pre_exec(|| {
+            nix::unistd::setsid()?;
+            Ok(())
+        });
+    }
+
+    println!("Starting host executable...");
+    let child = command.spawn()?;
+    thread::sleep(Duration::from_secs(10)); // Allow host to initialize
     Ok(child)
+}
+
+/// A guard to ensure the host process is properly stopped
+struct HostGuard {
+    child: Option<Child>,
+}
+
+impl HostGuard {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn stop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            println!("Stopping host...");
+            let _ = stop_host(&mut child); // Call your stop_host function
+        }
+    }
+}
+
+impl Drop for HostGuard {
+    fn drop(&mut self) {
+        println!("HostGuard is being dropped. Attempting to stop the host...");
+        self.stop();
+    }
 }
 
 /// Helper function to stop the host server gracefully
 fn stop_host(child: &mut Child) -> io::Result<()> {
-    child.kill()?;
+    println!("Sending SIGINT signal to the host process group...");
+    let pgid = nix::unistd::Pid::from_raw(-(child.id() as i32)); // Negative PID targets the process group
+    nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGINT)?;
+
+    // Wait for the host process to terminate
+    println!("Waiting for the host process to terminate...");
+    match child.wait() {
+        Ok(status) => {
+            println!("Host process terminated with status: {:?}", status);
+        }
+        Err(e) => {
+            eprintln!("Failed to wait for host process termination: {:?}", e);
+        }
+    }
+
+    // Check if the process group is still running
+    let output = Command::new("ps").arg("-o").arg("pid,pgid,comm").output()?;
+    let ps_output = String::from_utf8_lossy(&output.stdout);
+    println!("Process group status:\n{}", ps_output);
+
+    if ps_output.contains(&pgid.to_string()) {
+        println!("Process group is still running. Sending SIGKILL...");
+        nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL)?;
+        println!("SIGKILL signal sent to the process group.");
+    }
+
+    // Perform emergency cleanup for any orphaned Firecracker processes
+    println!("Performing emergency cleanup for orphaned Firecracker processes...");
+    emergency_cleanup()?;
+
     Ok(())
 }
 
@@ -79,7 +158,7 @@ async fn integration_test() {
     build_guest().expect("Failed to build guest");
 
     // Step 2: Run the host
-    let mut host_child = start_host().expect("Failed to start host");
+    let mut host_guard = HostGuard::new(start_host().expect("Failed to start host"));
 
     // Allow the host some time to initialize
     thread::sleep(Duration::from_secs(5));
@@ -181,7 +260,7 @@ async fn integration_test() {
             };
             assert!(
                 output.contains("content=\"text/html"),
-                "Expected HTML content, got {}",
+                "Expected HTML content, got {:?}",
                 output
             )
         }
@@ -210,8 +289,5 @@ async fn integration_test() {
     }
 
     // Step 4: Tear down the host
-    stop_host(&mut host_child).expect("Failed to stop host");
-
-    // Perform emergency cleanup if necessary
-    emergency_cleanup().expect("Failed to perform emergency cleanup");
+    host_guard.stop();
 }

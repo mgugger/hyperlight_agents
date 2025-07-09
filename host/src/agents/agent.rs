@@ -39,10 +39,6 @@ pub fn create_agent(
     // Create a sandbox for this agent
     let guest_instance = hyperlight_host::GuestBinary::FilePath(binary_path);
 
-    println!("DEBUG: Starting agent creation for {}", agent_id);
-
-    println!("DEBUG: Creating UninitializedSandbox with custom config...");
-
     // Create a more permissive sandbox configuration
     let mut sandbox_config = SandboxConfiguration::default();
     sandbox_config.set_input_data_size(100 * 1024 * 1024);
@@ -52,7 +48,6 @@ pub fn create_agent(
     let mut uninitialized_sandbox =
         UninitializedSandbox::new(guest_instance, Some(sandbox_config))?;
 
-    println!("DEBUG: Registering host functions...");
     // Register host functions specific to this agent
     register_host_functions(
         &mut uninitialized_sandbox,
@@ -63,20 +58,16 @@ pub fn create_agent(
     )?;
 
     // Initialize the sandbox
-    println!("DEBUG: Evolving sandbox...");
     let mut sandbox = uninitialized_sandbox.evolve(Noop::default())?;
 
-    println!("DEBUG: Calling guest GetName function...");
     let name = sandbox
         .call_guest_function_by_name::<String>(constants::GuestMethod::GetName.as_ref(), ())
         .unwrap();
 
-    println!("DEBUG: Calling guest GetDescription function...");
     let description = sandbox
         .call_guest_function_by_name::<String>(constants::GuestMethod::GetDescription.as_ref(), ())
         .unwrap();
 
-    println!("DEBUG: Calling guest GetParams function...");
     let params_str = sandbox
         .call_guest_function_by_name::<String>(constants::GuestMethod::GetParams.as_ref(), ())
         .unwrap();
@@ -174,7 +165,6 @@ pub fn create_agent(
         }
     }
 
-    println!("DEBUG: Agent creation completed successfully");
     Ok(Agent {
         id: agent_id.split("/").last().unwrap().to_string(),
         name,
@@ -417,19 +407,8 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
                                     "Storing request ID {} for agent {}",
                                     request_id, agent.id
                                 );
-                                println!(
-                                    "DEBUG: Before insertion - request map: {:?}",
-                                    *request_ids
-                                );
+
                                 request_ids.insert(agent.id.clone(), request_id);
-                                println!(
-                                    "DEBUG: After insertion - request map: {:?}",
-                                    *request_ids
-                                );
-                                println!(
-                                    "Global agent request IDs map now contains: {:?}",
-                                    request_ids
-                                );
                             }
 
                             // Extract the actual message content

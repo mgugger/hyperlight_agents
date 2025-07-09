@@ -112,7 +112,8 @@ pub(crate) fn start_firecracker_vm(
         .arg("--config-file")
         .arg(&config_path)
         .stdout(devnull.try_clone()?)
-        .stderr(devnull);
+        .stderr(devnull.try_clone()?)
+        .stdin(devnull);
 
     match cmd.spawn() {
         Ok(child) => {
@@ -369,9 +370,28 @@ pub(crate) async fn check_vm_health_internal(manager: &VmManager, vm_id: &str) -
 }
 
 pub(crate) fn terminate_process(pid: u32, signal: &str) -> Result<(), std::io::Error> {
-    Command::new("kill")
+    println!(
+        "Attempting to send signal '{}' to process with PID {}",
+        signal, pid
+    );
+    match Command::new("kill")
         .arg(format!("-{}", signal))
         .arg(pid.to_string())
         .output()
-        .map(|_| ())
+    {
+        Ok(_) => {
+            println!(
+                "Successfully sent signal '{}' to process with PID {}",
+                signal, pid
+            );
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!(
+                "Failed to send signal '{}' to process with PID {}: {:?}",
+                signal, pid, e
+            );
+            Err(e)
+        }
+    }
 }

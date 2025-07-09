@@ -148,7 +148,7 @@ async fn main() -> hyperlight_host::Result<()> {
             }
         }
         _ = tokio::signal::ctrl_c() => {
-            println!("Received Ctrl+C, shutting down gracefully...");
+            println!("Received Ctrl+C signal. Initiating graceful shutdown...");
 
             // Send shutdown signal to the server
             let _ = shutdown_tx.send(());
@@ -159,27 +159,31 @@ async fn main() -> hyperlight_host::Result<()> {
             // Abort the server task if it's still running
             abort_handle.abort();
 
-            println!("MCP server shutdown initiated");
+            println!("MCP server shutdown initiated. Waiting for server task to abort...");
         }
     }
 
     // Perform cleanup
-    println!("Shutting down VM Manager...");
+    println!("Shutting down VM Manager... Ensuring all VMs are terminated.");
     vm_manager_cleanup.shutdown();
 
     // Perform emergency cleanup as well
     VmManager::emergency_cleanup();
 
     // Signal all agent threads to shutdown
-    println!("Signaling agent threads to shutdown...");
+    println!("Signaling agent threads to shutdown... Setting shutdown flag.");
     shutdown_flag.store(true, Ordering::Relaxed);
 
     // Drop all tx_senders to disconnect agent channels (helps threads exit faster)
-    println!("Dropping agent senders to disconnect channels...");
+    println!(
+        "Dropping agent senders to disconnect channels... This will help threads exit faster."
+    );
     drop(tx_senders);
 
     // Wait for all agents to complete (with timeout)
-    println!("Waiting for agent threads to complete...");
+    println!(
+        "Waiting for agent threads to complete... This may take some time if threads are busy."
+    );
     let mut completed = 0;
     for handle in handles {
         match handle.join() {
@@ -192,7 +196,7 @@ async fn main() -> hyperlight_host::Result<()> {
     }
     println!("All agent threads completed: {}", completed);
 
-    println!("Application shutdown complete");
+    println!("Application shutdown complete. All resources have been cleaned up.");
 
     Ok(())
 }
