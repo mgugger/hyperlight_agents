@@ -1,76 +1,14 @@
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
-use std::process::{Command, Stdio};
-
-
-
 use std::io::Write;
-
 mod logger;
+mod command_execution;
+use command_execution::{execute_command, CommandRequest, CommandResponse};
 mod http_proxy;
 use http_proxy::HttpProxyResponse;
 use http_proxy::start_http_proxy_server;
 use http_proxy::VsockRequest;
 use http_proxy::VsockResponse;
-
-
-
-
-// Simple command structure expected by the host
-#[derive(Debug, Serialize, Deserialize)]
-struct CommandRequest {
-    command: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CommandResponse {
-    exit_code: i32,
-    stdout: String,
-    stderr: String,
-}
-
-// HTTP Proxy structures
-
-
-
-// Unified request/response for VSOCK communication
-
-
-fn execute_command(command: &str) -> CommandResponse {
-    log::info!("Executing command: {}", command);
-
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
-
-    match output {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let exit_code = output.status.code().unwrap_or(-1);
-
-            log::info!("Command completed with exit code {}", exit_code);
-
-            CommandResponse {
-                exit_code,
-                stdout,
-                stderr,
-            }
-        }
-        Err(e) => {
-            log::error!("Failed to execute command: {}", e);
-            CommandResponse {
-                exit_code: -1,
-                stdout: String::new(),
-                stderr: format!("Failed to execute command: {}", e),
-            }
-        }
-    }
-}
 
 fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("=== NEW CONNECTION HANDLER STARTED ===");
@@ -123,7 +61,7 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
                     let response = match request {
                         VsockRequest::Command(cmd_req) => {
                             log::info!("Executing command: '{}'", cmd_req.command);
-                            let cmd_response = execute_command(&cmd_req.command);
+                            let cmd_response = command_execution::execute_command(&cmd_req.command);
                             VsockResponse::Command(cmd_response)
                         }
                         VsockRequest::HttpProxy(proxy_req) => {
@@ -254,17 +192,6 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
     log::info!("=== CONNECTION HANDLER FINISHED ===");
     Ok(())
 }
-
-// HTTP proxy client for making requests to host
-
-
-
-
-
-
-// Old VsockLogger removed; replaced by logger::bounded_logger
-
-// Old CombinedLogger and init_combined_logger removed; replaced by logger::bounded_logger
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
