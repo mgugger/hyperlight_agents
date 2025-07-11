@@ -2,15 +2,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+
+
 use std::io::Write;
 
 mod logger;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server, StatusCode};
-use std::convert::Infallible;
+mod http_proxy;
+use http_proxy::HttpProxyResponse;
+use http_proxy::start_http_proxy_server;
+use http_proxy::VsockRequest;
+use http_proxy::VsockResponse;
+
+
+
 
 // Simple command structure expected by the host
 #[derive(Debug, Serialize, Deserialize)]
@@ -26,36 +31,11 @@ struct CommandResponse {
 }
 
 // HTTP Proxy structures
-#[derive(Debug, Serialize, Deserialize)]
-struct HttpProxyRequest {
-    method: String,
-    url: String,
-    headers: HashMap<String, String>,
-    body: Option<Vec<u8>>,
-}
 
-#[derive(Debug, Serialize, Deserialize)]
-struct HttpProxyResponse {
-    status_code: u16,
-    headers: HashMap<String, String>,
-    body: Vec<u8>,
-    error: Option<String>,
-}
+
 
 // Unified request/response for VSOCK communication
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-enum VsockRequest {
-    Command(CommandRequest),
-    HttpProxy(HttpProxyRequest),
-}
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-enum VsockResponse {
-    Command(CommandResponse),
-    HttpProxy(HttpProxyResponse),
-}
 
 fn execute_command(command: &str) -> CommandResponse {
     log::info!("Executing command: {}", command);
@@ -276,335 +256,9 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
 }
 
 // HTTP proxy client for making requests to host
-struct VsockHttpClient {}
 
-impl VsockHttpClient {
-    fn new() -> Self {
-        Self {}
-    }
 
-    async fn make_request(&self, req: HttpProxyRequest) -> Result<HttpProxyResponse, Box<dyn std::error::Error + Send + Sync>> {
-        // Use spawn_blocking to handle synchronous VSOCK operations
-        let result = tokio::task::spawn_blocking(move || {
-            // Create a new connection for each request
-            let mut stream = vsock::VsockStream::connect_with_cid_port(vsock::VMADDR_CID_HOST, 1235)?;
 
-            // Send request
-            let vsock_request = VsockRequest::HttpProxy(req);
-            let request_json = serde_json::to_string(&vsock_request)?;
-            stream.write_all(request_json.as_bytes())?;
-            stream.flush()?;
-
-            // Read response
-            let mut buffer = [0; 8192];
-            let mut response_data = String::new();
-
-            loop {
-                match stream.read(&mut buffer) {
-                    Ok(0) => break, // Connection closed
-                    Ok(n) => {
-                        let chunk = String::from_utf8_lossy(&buffer[..n]);
-                        response_data.push_str(&chunk);
-
-                        // Try to parse complete response
-                        if let Ok(vsock_response) = serde_json::from_str::<VsockResponse>(&response_data) {
-                            if let VsockResponse::HttpProxy(proxy_response) = vsock_response {
-                                return Ok(proxy_response);
-                            }
-                        }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                        continue;
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            }
-
-            Err("Failed to get response from host".into())
-        }).await;
-
-        match result {
-            Ok(response) => response,
-            Err(e) => Err(format!("Task join error: {}", e).into()),
-        }
-    }
-}
-
-async fn handle_http_request(
-    req: Request<Body>,
-    client: Arc<VsockHttpClient>,
-) -> Result<Response<Body>, Infallible> {
-    // Handle CONNECT method for HTTPS proxy
-    if req.method() == hyper::Method::CONNECT {
-        // For CONNECT requests, the URI is the target host:port
-        let target = req.uri().to_string();
-        log::info!("CONNECT request to: {}", target);
-        log::info!("CONNECT method received. Target: {}", target);
-        let vsock_port = 1235; // Replace with the actual vsock port the host proxy listens on
-
-        // Establish a vsock connection to the host proxy
-        log::info!("Attempting to establish a vsock connection to the host proxy at CID: {}, Port: {}", vsock::VMADDR_CID_HOST, vsock_port);
-        match vsock::VsockStream::connect_with_cid_port(vsock::VMADDR_CID_HOST, vsock_port) {
-            Ok(mut host_stream) => {
-                log::info!("Successfully established a vsock connection to the host proxy at CID: {}, Port: {}", vsock::VMADDR_CID_HOST, vsock_port);
-
-                // Send the actual CONNECT request line to the host proxy
-                let connect_line = format!("CONNECT {} HTTP/1.1\r\n\r\n", target);
-                if let Err(e) = host_stream.write_all(connect_line.as_bytes()) {
-                    log::error!("Failed to send CONNECT request to host proxy: {}", e);
-                } else {
-                    log::info!("CONNECT request sent to host proxy. Waiting for response...");
-                    let mut response_buffer = [0u8; 1024];
-                    match host_stream.read(&mut response_buffer) {
-                        Ok(n) if n > 0 => {
-                            log::info!("Received response from host proxy: {:?}", &response_buffer[..n]);
-                        }
-                        Ok(_) => {
-                            log::warn!("Host proxy closed connection without responding to CONNECT request.");
-                        }
-                        Err(e) => {
-                            log::error!("Failed to read response from host proxy: {}", e);
-                        }
-                    }
-                }
-
-                // Spawn a background task to handle the upgrade and forwarding
-                let req_for_upgrade = req;
-                tokio::spawn(async move {
-                    log::info!("Trying to upgrade connection (background task)");
-                    let upgraded = hyper::upgrade::on(req_for_upgrade).await;
-                    match upgraded {
-                        Ok(upgraded) => {
-                            log::info!("Upgrade succeeded, starting forwarding tasks.");
-                            let (mut client_reader, mut client_writer) = tokio::io::split(upgraded);
-
-                            // The vsock stream is sync, so we need to handle it in blocking threads.
-                            // We'll use channels to pass data between the async and sync worlds.
-                            log::info!("Cloning the VSOCK Stream");
-                            let mut host_reader = host_stream.try_clone().expect("Failed to clone vsock stream for reading");
-                            let mut host_writer = host_stream;
-
-                            let (c2h_tx, mut c2h_rx) = mpsc::channel::<Vec<u8>>(2);
-                            let (h2c_tx, mut h2c_rx) = mpsc::channel::<Vec<u8>>(2);
-
-                            log::info!("Starting packet forwarding between client and host proxy...");
-
-                            // 1. Read from async client, send to channel
-                            log::info!("Spawning client_reader_task");
-                            let client_reader_task = tokio::spawn(async move {
-                                log::info!("Client -> Host: Reader task started.");
-                                loop {
-                                    let mut buf = vec![0u8; 4096];
-                                    log::info!("Client -> Host: Waiting to read data from client...");
-                                    match client_reader.read(&mut buf).await {
-                                        Ok(0) => {
-                                            log::info!("Client -> Host: Client closed connection.");
-                                            break;
-                                        }
-                                        Ok(n) => {
-                                            buf.truncate(n);
-                                            log::info!("Client -> Host: Read {} bytes from client. Data: {:?}", n, &buf[..n.min(100)]);
-                                            if c2h_tx.send(buf).await.is_err() {
-                                                log::error!("Client -> Host: Failed to send data to host channel.");
-                                                break;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            log::error!("Client -> Host: Error reading from client: {}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-                                log::info!("Client -> Host: Reader task ended.");
-                            });
-
-                            // 2. Receive from channel, write to sync host
-                            log::info!("Spawning client_writer_task");
-                            let client_writer_task = tokio::task::spawn_blocking(move || {
-                                while let Some(data) = c2h_rx.blocking_recv() {
-                                    log::info!("Client -> Host: Writing {} bytes to host. Data: {:?}", data.len(), &data[..data.len().min(100)]);
-                                    if host_writer.write_all(&data).is_err() {
-                                        log::error!("Client -> Host: Failed to write data to host.");
-                                        break;
-                                    }
-                                }
-                            });
-
-                            // 3. Read from sync host, send to channel
-                            let host_reader_task = tokio::task::spawn_blocking(move || {
-                                loop {
-                                    let mut buf = vec![0u8; 4096];
-                                    log::info!("Host -> Client: Waiting to read data from host...");
-                                    match host_reader.read(&mut buf) {
-                                        Ok(0) => {
-                                            log::info!("Host -> Client: Host closed connection.");
-                                            break;
-                                        }
-                                        Ok(n) => {
-                                            buf.truncate(n);
-                                            log::info!("Host -> Client: Read {} bytes from host. Data: {:?}", n, &buf[..n.min(100)]);
-                                            // Use blocking_send as we are in a sync context.
-                                            if h2c_tx.blocking_send(buf).is_err() {
-                                                log::error!("Host -> Client: Failed to send data to client channel.");
-                                                break;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            log::error!("Host -> Client: Error reading from host: {}", e);
-                                            break;
-                                        }
-                                    }
-                                }
-                            });
-
-                            // 4. Receive from channel, write to async client
-                            let host_writer_task = tokio::spawn(async move {
-                                log::info!("Host -> Client: Writer task started.");
-                                while let Some(data) = h2c_rx.recv().await {
-                                    log::info!("Host -> Client: Writing {} bytes to client. Data: {:?}", data.len(), &data[..data.len().min(100)]);
-                                    if client_writer.write_all(&data).await.is_err() {
-                                        log::error!("Host -> Client: Failed to write data to client.");
-                                        break;
-                                    }
-                                }
-                                log::info!("Host -> Client: Writer task ended.");
-                            });
-
-                            // Wait for any of the tasks to finish, which indicates the connection is closing.
-                            tokio::select! {
-                                _ = client_reader_task => log::info!("Client reader task finished."),
-                                _ = client_writer_task => log::info!("Client writer task finished."),
-                                _ = host_reader_task => log::info!("Host reader task finished."),
-                                _ = host_writer_task => log::info!("Host writer task finished."),
-                            }
-                            log::info!("Packet forwarding terminated.");
-                            log::info!("CONNECT request handling completed successfully.");
-                        }
-                        Err(e) => {
-                            log::error!("Upgrade error: {}", e);
-                        }
-                    }
-                });
-
-                // Immediately return the 200 Connection Established response to the client
-                return Ok(
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .body(Body::empty())
-                        .unwrap()
-                );
-            }
-            Err(e) => {
-                log::error!("Failed to connect to host proxy: {}", e);
-                return Ok(Response::builder()
-                    .status(StatusCode::BAD_GATEWAY)
-                    .body(Body::from("Failed to connect to host proxy"))
-                    .unwrap());
-            }
-        }
-    }
-
-    let method = req.method().to_string();
-
-    // For standard HTTP proxy, extract target URL from request
-    let target_url = if req.uri().scheme().is_some() {
-        // Absolute URL (standard proxy format)
-        req.uri().to_string()
-    } else {
-        // Relative URL - this shouldn't happen in proxy mode
-        format!("http://{}{}",
-            req.headers().get("host")
-                .and_then(|h| h.to_str().ok())
-                .unwrap_or("localhost"),
-            req.uri().path_and_query()
-                .map(|pq| pq.as_str())
-                .unwrap_or("/")
-        )
-    };
-
-    log::info!("Proxying {} request to: {}", method, target_url);
-
-    // Collect headers (excluding proxy-specific headers)
-    let mut headers = HashMap::new();
-    for (name, value) in req.headers().iter() {
-        let name_str = name.as_str().to_lowercase();
-        if !name_str.starts_with("proxy-") {
-            if let Ok(value_str) = value.to_str() {
-                headers.insert(name.to_string(), value_str.to_string());
-            }
-        }
-    }
-
-    // Get body
-    let body_bytes = match hyper::body::to_bytes(req.into_body()).await {
-        Ok(bytes) => {
-            if bytes.is_empty() {
-                None
-            } else {
-                Some(bytes.to_vec())
-            }
-        }
-        Err(_) => None,
-    };
-
-    let proxy_request = HttpProxyRequest {
-        method,
-        url: target_url,
-        headers,
-        body: body_bytes,
-    };
-
-    match client.make_request(proxy_request).await {
-        Ok(proxy_response) => {
-            let mut response_builder = Response::builder()
-                .status(proxy_response.status_code);
-
-            // Add headers
-            for (name, value) in proxy_response.headers {
-                response_builder = response_builder.header(&name, &value);
-            }
-
-            match response_builder.body(Body::from(proxy_response.body)) {
-                Ok(response) => Ok(response),
-                Err(_) => Ok(Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(Body::from("Failed to build response"))
-                    .unwrap()),
-            }
-        }
-        Err(e) => {
-            log::info!("Proxy request failed: {}", e);
-            Ok(Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(Body::from(format!("Proxy error: {}", e)))
-                .unwrap())
-        }
-    }
-}
-
-async fn start_http_proxy_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client = Arc::new(VsockHttpClient::new());
-
-    let make_svc = make_service_fn(move |_conn| {
-        let client = client.clone();
-        async move {
-            Ok::<_, Infallible>(service_fn(move |req| {
-                handle_http_request(req, client.clone())
-            }))
-        }
-    });
-
-    // Bind to all interfaces on port 8080 to act as HTTP proxy
-    let addr = ([0, 0, 0, 0], 8080).into();
-    let server = Server::bind(&addr).serve(make_svc);
-
-    log::info!("HTTP Proxy Server listening on 0.0.0.0:8080");
-    log::info!("Set http_proxy=http://127.0.0.1:8080 to use this proxy");
-
-    server.await?;
-    Ok(())
-}
 
 
 
