@@ -4,10 +4,10 @@ use hyperlight_agents_common::{
     traits::agent::{Param, ParamType},
 };
 use rust_mcp_schema::{
-    CallToolRequest, CallToolResult, ListToolsRequest, ListToolsResult, RpcError, Tool,
-    ToolInputSchema, schema_utils::CallToolError,
+    schema_utils::CallToolError, CallToolRequest, CallToolResult, ListToolsRequest,
+    ListToolsResult, RpcError, Tool, ToolInputSchema,
 };
-use rust_mcp_sdk::{McpServer, mcp_server::ServerHandler};
+use rust_mcp_sdk::{mcp_server::ServerHandler, McpServer};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
@@ -65,7 +65,7 @@ impl ServerHandler for HyperlightAgentHandler {
 
         let request_id = format!("req-{}", uuid::Uuid::new_v4());
 
-        println!("{:?}", request);
+        log::debug!("{:?}", request);
 
         // Log the incoming request
         //log_mcp_request(&tool_name, "message", &request_id);
@@ -109,9 +109,10 @@ impl ServerHandler for HyperlightAgentHandler {
             )));
         }
 
-        println!(
+        log::debug!(
             "[REQUEST ID: {}] Processing request for agent '{}'",
-            request_id, tool_name
+            request_id,
+            tool_name
         );
 
         // Wait for response with timeout
@@ -127,7 +128,7 @@ impl ServerHandler for HyperlightAgentHandler {
 
         // Clean up resources
         {
-            println!(
+            log::debug!(
                 "Request completed (ID: {}), cleaning up resources",
                 request_id
             );
@@ -144,7 +145,7 @@ impl ServerHandler for HyperlightAgentHandler {
 
                 for agent_id in agents_to_clear {
                     request_ids.remove(&agent_id);
-                    println!("Cleaned up request ID mapping for agent: {}", agent_id);
+                    log::debug!("Cleaned up request ID mapping for agent: {}", agent_id);
                 }
             }
         }
@@ -194,7 +195,7 @@ pub fn params_to_tool_input_schema(params: Vec<Param>) -> ToolInputSchema {
 async fn wait_for_response(rx: oneshot::Receiver<String>, timeout_seconds: u64) -> Option<String> {
     let timeout = Duration::from_secs(timeout_seconds);
 
-    println!(
+    log::debug!(
         "MCP server waiting for response (timeout: {}s)...",
         timeout_seconds
     );
@@ -202,15 +203,15 @@ async fn wait_for_response(rx: oneshot::Receiver<String>, timeout_seconds: u64) 
     // Use tokio timeout for the oneshot receiver
     match tokio::time::timeout(timeout, rx).await {
         Ok(Ok(response)) => {
-            println!("MCP server received response");
+            log::debug!("MCP server received response");
             Some(response)
         }
         Ok(Err(_)) => {
-            println!("MCP server response channel was dropped");
+            log::error!("MCP server response channel was dropped");
             None
         }
         Err(_) => {
-            println!(
+            log::error!(
                 "MCP server timed out after {}s waiting for response",
                 timeout_seconds
             );

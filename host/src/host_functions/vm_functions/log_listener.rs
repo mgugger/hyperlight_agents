@@ -36,7 +36,7 @@ pub(crate) fn start_log_listener_server(
                 if let Err(e) =
                     run_log_listener_unix_server(&socket_path, &vm_id, shutdown_flag.clone())
                 {
-                    eprintln!("Log listener Unix server failed: {}", e);
+                    log::error!("[host] Log listener Unix server failed: {}", e);
                 }
                 // Once we've started (or failed), break the loop.
                 break;
@@ -60,7 +60,10 @@ fn run_log_listener_unix_server(
     let _ = std::fs::remove_file(socket_path);
 
     let listener = UnixListener::bind(socket_path)?;
-    println!("Log Listener listening on Unix socket: {}", socket_path);
+    log::debug!(
+        "[host] Log Listener listening on Unix socket: {}",
+        socket_path
+    );
 
     // Set a timeout so the accept loop doesn't block forever, allowing shutdown check.
     listener.set_nonblocking(true)?;
@@ -75,7 +78,7 @@ fn run_log_listener_unix_server(
                 let vm_id = vm_id.to_string();
                 thread::spawn(move || {
                     if let Err(e) = handle_log_listener_unix_connection(&mut stream, &vm_id) {
-                        eprintln!("Error handling log listener connection: {}", e);
+                        log::error!("[host] Error handling log listener connection: {}", e);
                     }
                 });
             }
@@ -85,7 +88,7 @@ fn run_log_listener_unix_server(
                 continue;
             }
             Err(e) => {
-                eprintln!("Error accepting log listener connection: {}", e);
+                log::error!("[host] Error accepting log listener connection: {}", e);
                 // Potentially break here if the listener is in an unrecoverable state.
             }
         }
@@ -116,7 +119,7 @@ fn handle_log_listener_unix_connection(
                         if c == '\n' || c == '\r' {
                             let line = &incomplete[last_index..idx];
                             if !line.trim().is_empty() {
-                                println!("[{}] {}", vm_id, line);
+                                log::info!("[{}] {}", vm_id, line);
                             }
                             last_index = idx + 1;
                         }
@@ -127,7 +130,7 @@ fn handle_log_listener_unix_connection(
                 }
             }
             Err(e) => {
-                eprintln!("Error reading from log listener unix stream: {}", e);
+                log::error!("[host] Error reading from log listener unix stream: {}", e);
                 break;
             }
         }
@@ -135,7 +138,7 @@ fn handle_log_listener_unix_connection(
 
     // Print any remaining incomplete line
     if !incomplete.trim().is_empty() {
-        println!("[{}] {}", vm_id, incomplete);
+        log::info!("[{}] {}", vm_id, incomplete);
     }
 
     Ok(())

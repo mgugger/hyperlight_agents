@@ -36,11 +36,11 @@ pub(crate) fn start_http_proxy_server_internal(
     port: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     thread::spawn(move || {
-        println!("Host proxy thread started for handling HTTP proxy requests.");
+        log::debug!("Host proxy thread started for handling HTTP proxy requests.");
         // Wait for a VM to be created to determine the socket path.
         loop {
             if shutdown_flag.load(Ordering::Relaxed) {
-                println!("Shutdown flag detected, stopping server initialization.");
+                log::debug!("Shutdown flag detected, stopping server initialization.");
                 break;
             }
 
@@ -55,8 +55,8 @@ pub(crate) fn start_http_proxy_server_internal(
             };
 
             if let Some(socket_path) = socket_path {
-                println!("Computed socket path: {}", socket_path);
-                println!(
+                log::debug!("Computed socket path: {}", socket_path);
+                log::debug!(
                     "Attempting to start HTTP proxy Unix server at socket path: {}",
                     socket_path
                 );
@@ -65,8 +65,8 @@ pub(crate) fn start_http_proxy_server_internal(
                     http_client.clone(),
                     shutdown_flag.clone(),
                 ) {
-                    println!("Failed to start HTTP proxy Unix server: {}", e);
-                    eprintln!("HTTP proxy Unix server failed: {}", e);
+                    log::error!("Failed to start HTTP proxy Unix server: {}", e);
+                    log::error!("HTTP proxy Unix server failed: {}", e);
                 }
                 break;
             } else {
@@ -86,8 +86,7 @@ fn run_http_proxy_unix_server(
     let _ = std::fs::remove_file(socket_path);
 
     let listener = UnixListener::bind(socket_path)?;
-    println!("HTTP Proxy listening on Unix socket: {}", socket_path);
-    println!("Server is now ready to accept connections.");
+    log::info!("HTTP Proxy listening on Unix socket: {}", socket_path);
 
     listener.set_nonblocking(true)?;
 
@@ -101,7 +100,7 @@ fn run_http_proxy_unix_server(
                 let client = http_client.clone();
                 thread::spawn(move || {
                     if let Err(e) = handle_http_proxy_or_connect(&mut stream, client) {
-                        eprintln!("Error handling HTTP proxy connection: {}", e);
+                        log::error!("Error handling HTTP proxy connection: {}", e);
                     }
                 });
             }
@@ -110,7 +109,7 @@ fn run_http_proxy_unix_server(
                 continue;
             }
             Err(e) => {
-                eprintln!("Error accepting HTTP proxy connection: {}", e);
+                log::error!("Error accepting HTTP proxy connection: {}", e);
             }
         }
     }
@@ -142,19 +141,19 @@ fn handle_http_proxy_or_connect(
             return Ok(());
         }
         let target = parts[1];
-        println!("CONNECT method received. Target: {}", target);
+        log::debug!("CONNECT method received. Target: {}", target);
 
         // Connect to the target server
         match TcpStream::connect(target) {
             Ok(mut target_stream) => {
                 // Send 200 Connection Established
-                println!("Connected to target {}", target);
+                log::debug!("Connected to target {}", target);
                 let _ = stream.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n");
                 // Relay data in both directions
                 relay_bidirectional(stream, &mut target_stream)?;
             }
             Err(e) => {
-                eprintln!("Failed to connect to target {}: {}", target, e);
+                log::error!("Failed to connect to target {}: {}", target, e);
                 let _ = stream.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n");
             }
         }
@@ -181,7 +180,7 @@ fn handle_http_proxy_or_connect(
                 }
             }
             Err(e) => {
-                eprintln!("Error reading from HTTP proxy unix stream: {}", e);
+                log::error!("Error reading from HTTP proxy unix stream: {}", e);
                 break;
             }
         }
@@ -199,9 +198,10 @@ fn execute_http_request(
         .unwrap();
 
     rt.block_on(async {
-        println!(
+        log::debug!(
             "Executing HTTP request: {} {}",
-            proxy_request.method, proxy_request.url
+            proxy_request.method,
+            proxy_request.url
         );
         let method = match proxy_request.method.to_uppercase().as_str() {
             "POST" => reqwest::Method::POST,
@@ -232,7 +232,7 @@ fn execute_http_request(
                         headers.insert(name.to_string(), value_str.to_string());
                     }
                 }
-                println!("Received response with status: {}", response.status());
+                log::debug!("Received response with status: {}", response.status());
                 match response.bytes().await {
                     Ok(body_bytes) => HttpProxyResponse {
                         status_code,
@@ -241,7 +241,7 @@ fn execute_http_request(
                         error: None,
                     },
                     Err(e) => {
-                        eprintln!("HTTP request failed: {}", e);
+                        log::error!("HTTP request failed: {}", e);
                         HttpProxyResponse {
                             status_code: 500,
                             headers: HashMap::new(),
@@ -252,7 +252,7 @@ fn execute_http_request(
                 }
             }
             Err(e) => {
-                eprintln!("HTTP request failed: {}", e);
+                log::error!("HTTP request failed: {}", e);
                 HttpProxyResponse {
                     status_code: 500,
                     headers: HashMap::new(),
@@ -282,7 +282,7 @@ fn relay_bidirectional(
     let s2a_shutdown = s2a.try_clone()?;
     thread::spawn(move || {
         let res = std::io::copy(&mut s1a, &mut s2a);
-        println!("Client->Server relay thread exiting, result: {:?}", res);
+        log::debug!("Client->Server relay thread exiting, result: {:?}", res);
         if !closed1.swap(true, Ordering::SeqCst) {
             let _ = s2a_shutdown.shutdown(Shutdown::Write);
         }
@@ -292,7 +292,7 @@ fn relay_bidirectional(
     let s1b_shutdown = s1b.try_clone()?;
     thread::spawn(move || {
         let res = std::io::copy(&mut s2b, &mut s1b);
-        println!("Server->Client relay thread exiting, result: {:?}", res);
+        log::debug!("Server->Client relay thread exiting, result: {:?}", res);
         if !closed2.swap(true, Ordering::SeqCst) {
             let _ = s1b_shutdown.shutdown(Shutdown::Write);
         }

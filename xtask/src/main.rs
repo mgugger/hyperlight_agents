@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
+use log;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
@@ -99,46 +100,45 @@ async fn main() -> Result<()> {
 }
 
 async fn run_all(paths: &Paths) -> Result<()> {
-    println!(
+    log::info!(
         "{}",
         "🚀 Starting complete build process...".bright_blue().bold()
     );
-    println!();
 
     check_dependencies()?;
 
-    println!("\n{}", "1. Building guest package...".bright_cyan());
+    log::info!("\n{}", "1. Building guest package...".bright_cyan());
     build_guest(paths)?;
 
-    println!("\n{}", "2. Building rootfs with vm-agent...".bright_cyan());
+    log::info!("\n{}", "2. Building rootfs with vm-agent...".bright_cyan());
     add_agent_to_rootfs(paths)?;
 
-    println!("\n{}", "3. Checking kernel binary...".bright_cyan());
+    log::info!("\n{}", "3. Checking kernel binary...".bright_cyan());
     let final_kernel_path = paths.vm_images_dir.join("vmlinux");
     if !final_kernel_path.exists() {
-        println!("Kernel not found, downloading...");
+        log::info!("Kernel not found, downloading...");
         download_kernel(paths).await?;
     } else {
-        println!(
+        log::info!(
             "{} Kernel binary already exists at {}",
             "✓".bright_green(),
             final_kernel_path.display()
         );
     }
 
-    println!("\n{}", "6. Checking firecracker binary...".bright_cyan());
+    log::info!("\n{}", "6. Checking firecracker binary...".bright_cyan());
     if !paths.firecracker_binary.exists() {
-        println!("Firecracker not found, downloading...");
+        log::info!("Firecracker not found, downloading...");
         download_firecracker(paths).await?;
     } else {
-        println!(
+        log::info!(
             "{} Firecracker binary already exists at {}",
             "✓".bright_green(),
             paths.firecracker_binary.display()
         );
     }
 
-    println!("\n{}", "7. Running host application...".bright_cyan());
+    log::info!("\n{}", "7. Running host application...".bright_cyan());
     run_host(paths)?;
 
     Ok(())
@@ -165,7 +165,7 @@ fn check_dependencies() -> Result<()> {
     let required_targets = ["x86_64-unknown-linux-musl", "x86_64-unknown-none"];
     for target in &required_targets {
         if !installed_targets.contains(target) {
-            println!(
+            log::info!(
                 "{} Installing required target {}...",
                 "⚠".bright_yellow(),
                 target
@@ -176,19 +176,19 @@ fn check_dependencies() -> Result<()> {
             if !status.success() {
                 return Err(anyhow!("Failed to install target {}", target));
             }
-            println!("{} Installed target {}", "✓".bright_green(), target);
+            log::info!("{} Installed target {}", "✓".bright_green(), target);
         }
     }
 
     if !missing.is_empty() {
-        println!("\n{} Missing required dependencies:", "✗".bright_red());
+        log::info!("\n{} Missing required dependencies:", "✗".bright_red());
         for dep in &missing {
-            println!("  - {}", dep);
+            log::info!("  - {}", dep);
         }
-        println!("\nOn Ubuntu/Debian:");
-        println!("  sudo apt update && sudo apt install coreutils e2fsprogs sudo");
-        println!("\nOn Fedora/RHEL:");
-        println!("  sudo dnf install coreutils e2fsprogs sudo");
+        log::info!("\nOn Ubuntu/Debian:");
+        log::info!("  sudo apt update && sudo apt install coreutils e2fsprogs sudo");
+        log::info!("\nOn Fedora/RHEL:");
+        log::info!("  sudo dnf install coreutils e2fsprogs sudo");
         return Err(anyhow!("Missing dependencies"));
     }
 
@@ -196,7 +196,7 @@ fn check_dependencies() -> Result<()> {
 }
 
 fn build_guest(paths: &Paths) -> Result<()> {
-    println!(
+    log::info!(
         "{} Building standalone guest package for x86_64-unknown-none...",
         "📦".bright_blue()
     );
@@ -221,12 +221,12 @@ fn build_guest(paths: &Paths) -> Result<()> {
         ));
     }
 
-    println!("{} Guest package built successfully", "✓".bright_green());
+    log::info!("{} Guest package built successfully", "✓".bright_green());
     Ok(())
 }
 
 fn build_vm_agent(paths: &Paths) -> Result<()> {
-    println!(
+    log::info!(
         "{} Building standalone vm-agent for x86_64-unknown-linux-musl...",
         "📦".bright_blue()
     );
@@ -250,18 +250,18 @@ fn build_vm_agent(paths: &Paths) -> Result<()> {
         ));
     }
 
-    println!("{} vm-agent built successfully", "✓".bright_green());
+    log::info!("{} vm-agent built successfully", "✓".bright_green());
     Ok(())
 }
 
 fn build_base_rootfs(paths: &Paths) -> Result<()> {
-    println!(
+    log::info!(
         "{} Building base rootfs image from Dockerfile...",
         "🐳".bright_blue()
     );
 
     if paths.rootfs_path.exists() {
-        println!(
+        log::info!(
             "{} Base rootfs image already exists. Skipping.",
             "✓".bright_green()
         );
@@ -277,7 +277,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
     }
 
     let podman_image_tag = "hyperlight-rootfs:latest";
-    println!("Building Podman image from Dockerfile...");
+    log::info!("Building Podman image from Dockerfile...");
     let build_output = Command::new("podman")
         .args([
             "build",
@@ -299,7 +299,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
     let container_name = "hyperlight-rootfs-builder";
     let _ = Command::new("podman").args(["rm", container_name]).output(); // Clean up old container
 
-    println!("Creating container from image...");
+    log::info!("Creating container from image...");
     let create_output = Command::new("podman")
         .args(["create", "--name", container_name, podman_image_tag])
         .output()?;
@@ -312,7 +312,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
 
     // 3. Create and format the rootfs.ext4 file (increased size for git, rust, etc.)
     let rootfs_size_mb = 2000;
-    println!("Creating empty {}MB file for rootfs...", rootfs_size_mb);
+    log::info!("Creating empty {}MB file for rootfs...", rootfs_size_mb);
     let dd_output = Command::new("dd")
         .args([
             "if=/dev/zero",
@@ -329,7 +329,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
         ));
     }
 
-    println!("Formatting file as ext4...");
+    log::info!("Formatting file as ext4...");
     let mkfs_output = Command::new("mkfs.ext4")
         .args(["-F", paths.rootfs_path.to_str().unwrap()])
         .output()?;
@@ -346,7 +346,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
     let mount_point = temp_dir.path().join("mnt");
     fs::create_dir_all(&mount_point)?;
 
-    println!("Mounting rootfs image (requires sudo)...");
+    log::info!("Mounting rootfs image (requires sudo)...");
     let mount_cmd = Command::new("sudo")
         .args([
             "mount",
@@ -364,7 +364,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
         ));
     }
 
-    println!("Exporting Podman filesystem and extracting to rootfs (requires sudo)...");
+    log::info!("Exporting Podman filesystem and extracting to rootfs (requires sudo)...");
     let export_output = Command::new("podman")
         .args(["export", container_name])
         .stdout(std::process::Stdio::piped())
@@ -387,7 +387,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
     }
 
     // 5. Unmount and cleanup
-    println!("Unmounting rootfs image (requires sudo)...");
+    log::info!("Unmounting rootfs image (requires sudo)...");
     let umount_cmd = Command::new("sudo")
         .args(["umount", mount_point.to_str().unwrap()])
         .output()?;
@@ -402,7 +402,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
     // Clean up the container
     let _ = Command::new("podman").args(["rm", container_name]).output();
 
-    println!(
+    log::info!(
         "{} Base rootfs image with development tools created successfully.",
         "✓".bright_green()
     );
@@ -410,7 +410,7 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
 }
 
 fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
-    println!("{} Building rootfs with vm-agent...", "📦".bright_blue());
+    log::info!("{} Building rootfs with vm-agent...", "📦".bright_blue());
 
     // Ensure vm-agent is built
     build_vm_agent(paths)?;
@@ -426,11 +426,11 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
 
     // Copy vm-agent to firecracker directory for Docker build
     let vm_agent_dest = paths.firecracker_dir.join("vm-agent");
-    println!("Copying vm-agent binary to firecracker directory...");
+    log::info!("Copying vm-agent binary to firecracker directory...");
     fs::copy(&vm_agent_src, &vm_agent_dest)?;
 
     // Build the Docker image with the vm-agent
-    println!("Building Docker image with vm-agent...");
+    log::info!("Building Docker image with vm-agent...");
     let docker_build = Command::new("docker")
         .args([
             "build",
@@ -451,7 +451,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
     }
 
     // Create a container and export it as a tar
-    println!("Creating container from image...");
+    log::info!("Creating container from image...");
     let create_container = Command::new("docker")
         .args([
             "create",
@@ -470,7 +470,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
     }
 
     // Export the container filesystem to a tar file
-    println!("Exporting container filesystem...");
+    log::info!("Exporting container filesystem...");
     let export_container = Command::new("docker")
         .args(["export", "hyperlight-rootfs-temp"])
         .current_dir(&paths.firecracker_dir)
@@ -478,7 +478,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
         .spawn()?;
 
     // Create the ext4 filesystem
-    println!("Creating ext4 filesystem...");
+    log::info!("Creating ext4 filesystem...");
     let dd_cmd = Command::new("dd")
         .args(["if=/dev/zero", "of=rootfs.ext4", "bs=1M", "count=512"])
         .current_dir(&paths.firecracker_dir)
@@ -509,7 +509,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
     let mount_point = temp_dir.path().join("mnt");
     fs::create_dir_all(&mount_point)?;
 
-    println!("Mounting ext4 filesystem (requires sudo)...");
+    log::info!("Mounting ext4 filesystem (requires sudo)...");
     let mount_cmd = Command::new("sudo")
         .args([
             "mount",
@@ -529,7 +529,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
     }
 
     // Extract the container tar into the mounted filesystem
-    println!("Extracting container contents (requires sudo)...");
+    log::info!("Extracting container contents (requires sudo)...");
     let mut export_child = export_container;
     let extract_cmd = Command::new("sudo")
         .args(["tar", "-xf", "-", "-C", mount_point.to_str().unwrap()])
@@ -547,7 +547,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
     }
 
     // Unmount the filesystem
-    println!("Unmounting filesystem...");
+    log::info!("Unmounting filesystem...");
     let umount_cmd = Command::new("sudo")
         .args(["umount", mount_point.to_str().unwrap()])
         .output()?;
@@ -567,7 +567,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
     // Clean up the temporary vm-agent file
     let _ = fs::remove_file(&vm_agent_dest);
 
-    println!(
+    log::info!(
         "{} Rootfs with vm-agent successfully created.",
         "✓".bright_green()
     );
@@ -575,7 +575,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
 }
 
 async fn download_kernel(paths: &Paths) -> Result<()> {
-    println!("Downloading kernel binary...");
+    log::info!("Downloading kernel binary...");
     fs::create_dir_all(&paths.vm_images_dir)?;
     let response = reqwest::get(KERNEL_URL).await?;
     if !response.status().is_success() {
@@ -601,7 +601,7 @@ async fn download_kernel(paths: &Paths) -> Result<()> {
     let final_kernel_path = paths.vm_images_dir.join("vmlinux");
     fs::rename(&paths.kernel_path, &final_kernel_path)?;
 
-    println!(
+    log::info!(
         "{} Kernel downloaded and renamed to {}",
         "✓".bright_green(),
         final_kernel_path.display()
@@ -610,7 +610,7 @@ async fn download_kernel(paths: &Paths) -> Result<()> {
 }
 
 async fn download_firecracker(paths: &Paths) -> Result<()> {
-    println!("Downloading Firecracker binary...");
+    log::info!("Downloading Firecracker binary...");
     fs::create_dir_all(&paths.firecracker_dir)?;
     let response = reqwest::get(FIRECRACKER_URL).await?;
     if !response.status().is_success() {
@@ -655,7 +655,7 @@ async fn download_firecracker(paths: &Paths) -> Result<()> {
         perms.set_mode(0o755);
         fs::set_permissions(&paths.firecracker_binary, perms)?;
     }
-    println!(
+    log::info!(
         "{} Firecracker downloaded and extracted to {}",
         "✓".bright_green(),
         paths.firecracker_binary.display()
@@ -664,7 +664,7 @@ async fn download_firecracker(paths: &Paths) -> Result<()> {
 }
 
 fn run_host(paths: &Paths) -> Result<()> {
-    println!("\n{}", "Running host application...".bright_green().bold());
+    log::info!("\n{}", "Running host application...".bright_green().bold());
     let status = Command::new("cargo")
         .args(["run", "-p", "hyperlight-agents-host"])
         .current_dir(&paths.project_root)
@@ -676,13 +676,13 @@ fn run_host(paths: &Paths) -> Result<()> {
 }
 
 fn clean(paths: &Paths) -> Result<()> {
-    println!(
+    log::info!(
         "{}",
         "Cleaning downloaded and built artifacts...".bright_blue()
     );
     if paths.kernel_path.exists() {
         fs::remove_file(&paths.kernel_path)?;
-        println!(
+        log::info!(
             "{} Removed kernel: {}",
             "✓".bright_green(),
             paths.kernel_path.display()
@@ -690,7 +690,7 @@ fn clean(paths: &Paths) -> Result<()> {
     }
     if paths.rootfs_path.exists() {
         fs::remove_file(&paths.rootfs_path)?;
-        println!(
+        log::info!(
             "{} Removed rootfs: {}",
             "✓".bright_green(),
             paths.rootfs_path.display()
@@ -698,7 +698,7 @@ fn clean(paths: &Paths) -> Result<()> {
     }
     if paths.firecracker_dir.exists() {
         fs::remove_dir_all(&paths.firecracker_dir)?;
-        println!(
+        log::info!(
             "{} Removed firecracker: {}",
             "✓".bright_green(),
             paths.firecracker_dir.display()
@@ -709,8 +709,8 @@ fn clean(paths: &Paths) -> Result<()> {
         .current_dir(&paths.project_root)
         .output()?;
     if output.status.success() {
-        println!("{} Cleaned cargo build artifacts", "✓".bright_green());
+        log::info!("{} Cleaned cargo build artifacts", "✓".bright_green());
     }
-    println!("{}", "✓ Cleanup complete".bright_green());
+    log::info!("{}", "✓ Cleanup complete".bright_green());
     Ok(())
 }

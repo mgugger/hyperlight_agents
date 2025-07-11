@@ -104,10 +104,10 @@ pub async fn handle_http_request(
 ) -> Result<Response<Body>, Infallible> {
     if req.method() == hyper::Method::CONNECT {
         let target = req.uri().to_string();
-        log::info!("CONNECT request to: {}", target);
+        log::debug!("CONNECT request to: {}", target);
         let vsock_port = 1235;
 
-        log::info!("Attempting to establish a vsock connection to the host proxy at CID: {}, Port: {}", vsock::VMADDR_CID_HOST, vsock_port);
+        log::debug!("Attempting to establish a vsock connection to the host proxy at CID: {}, Port: {}", vsock::VMADDR_CID_HOST, vsock_port);
         match vsock::VsockStream::connect_with_cid_port(vsock::VMADDR_CID_HOST, vsock_port) {
             Ok(mut host_stream) => {
                 let connect_line = format!("CONNECT {} HTTP/1.1\r\n\r\n", target);
@@ -117,7 +117,7 @@ pub async fn handle_http_request(
                     let mut response_buffer = [0u8; 1024];
                     match host_stream.read(&mut response_buffer) {
                         Ok(n) if n > 0 => {
-                            log::info!("Received response from host proxy: {:?}", &response_buffer[..n]);
+                            log::debug!("Received response from host proxy: {:?}", &response_buffer[..n]);
                         }
                         Ok(_) => {
                             log::warn!("Host proxy closed connection without responding to CONNECT request.");

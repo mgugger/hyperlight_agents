@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
 
-// Simple command structure expected by the host
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommandRequest {
     pub command: String,
@@ -15,7 +14,7 @@ pub struct CommandResponse {
 }
 
 pub fn execute_command(command: &str) -> CommandResponse {
-    log::info!("Executing command: {}", command);
+    log::debug!("Executing command: {}", command);
 
     let output = Command::new("sh")
         .arg("-c")
@@ -30,7 +29,7 @@ pub fn execute_command(command: &str) -> CommandResponse {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let exit_code = output.status.code().unwrap_or(-1);
 
-            log::info!("Command completed with exit code {}", exit_code);
+            log::debug!("Command completed with exit code {}", exit_code);
 
             CommandResponse {
                 exit_code,

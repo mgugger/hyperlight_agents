@@ -159,7 +159,7 @@ pub fn create_agent(
                     required,
                 });
                 // for param in &params {
-                //     println!("Added parameter: {:?}", param);
+                //     log::info!("Added parameter: {:?}", param);
                 // }
             }
         }
@@ -207,7 +207,7 @@ pub fn register_host_functions(
                 });
 
                 if let Err(e) = sender.send((Some(response), callback_name)) {
-                    eprintln!("Failed to send response: {:?}", e);
+                    log::error!("Failed to send response: {:?}", e);
                 }
             });
 
@@ -222,7 +222,7 @@ pub fn register_host_functions(
     sandbox.register_with_extra_allowed_syscalls(
         constants::HostMethod::FinalResult.as_ref(),
         move |answer: String, _param: String| {
-            println!("Finalresult called for agent {}", agent_id_clone);
+            log::debug!("Finalresult called for agent {}", agent_id_clone);
 
             // Look up the request ID for this agent
             let request_id = {
@@ -267,7 +267,7 @@ pub fn register_host_functions(
                 });
 
                 if let Err(e) = sender.send((Some(response), callback_name)) {
-                    eprintln!("Failed to send VM creation response: {:?}", e);
+                    log::error!("Failed to send VM creation response: {:?}", e);
                 }
             });
 
@@ -304,7 +304,7 @@ pub fn register_host_functions(
                 });
 
                 if let Err(e) = sender.send((Some(response), callback_name)) {
-                    eprintln!("Failed to send VM command response: {:?}", e);
+                    log::error!("Failed to send VM command response: {:?}", e);
                 }
             });
 
@@ -332,7 +332,7 @@ pub fn register_host_functions(
                 });
 
                 if let Err(e) = sender.send((Some(response), callback_name)) {
-                    eprintln!("Failed to send VM destruction response: {:?}", e);
+                    log::error!("Failed to send VM destruction response: {:?}", e);
                 }
             });
 
@@ -355,7 +355,7 @@ pub fn register_host_functions(
                 let response = serde_json::to_string(&vms).unwrap_or_else(|_| "[]".to_string());
 
                 if let Err(e) = sender.send((Some(response), callback_name)) {
-                    eprintln!("Failed to send VM list response: {:?}", e);
+                    log::error!("Failed to send VM list response: {:?}", e);
                 }
             });
 
@@ -368,12 +368,12 @@ pub fn register_host_functions(
 }
 
 pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
-    println!("Agent {} event loop started", agent.id);
+    log::debug!("Agent {} event loop started", agent.id);
 
     loop {
         // Check for shutdown signal first
         if shutdown_flag.load(Ordering::Relaxed) {
-            println!(
+            log::debug!(
                 "Agent {} received shutdown signal, exiting event loop",
                 agent.id
             );
@@ -384,7 +384,7 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
             Ok((content, callback_name)) => {
                 // Check shutdown flag again before processing message
                 if shutdown_flag.load(Ordering::Relaxed) {
-                    println!(
+                    log::debug!(
                         "Agent {} received shutdown signal during message processing, exiting",
                         agent.id
                     );
@@ -403,9 +403,10 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
                             if let Ok(mut request_ids) =
                                 crate::mcp_server::MCP_AGENT_REQUEST_IDS.lock()
                             {
-                                println!(
+                                log::trace!(
                                     "Storing request ID {} for agent {}",
-                                    request_id, agent.id
+                                    request_id,
+                                    agent.id
                                 );
 
                                 request_ids.insert(agent.id.clone(), request_id);
@@ -414,9 +415,10 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
                             // Extract the actual message content
                             let actual_content = parts[2].to_string();
 
-                            println!(
+                            log::trace!(
                                 "Callback function called: {}, params: {:?}",
-                                callback_name, actual_content
+                                callback_name,
+                                actual_content
                             );
                             let callback_result =
                                 agent.sandbox.call_guest_function_by_name::<String>(
@@ -429,7 +431,7 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
 
                             // Check shutdown flag after processing
                             if shutdown_flag.load(Ordering::Relaxed) {
-                                println!("Agent {} received shutdown signal after processing message, exiting", agent.id);
+                                log::trace!("Agent {} received shutdown signal after processing message, exiting", agent.id);
                                 break;
                             }
                             continue;
@@ -451,7 +453,7 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
 
                 // Check shutdown flag after processing
                 if shutdown_flag.load(Ordering::Relaxed) {
-                    println!(
+                    log::trace!(
                         "Agent {} received shutdown signal after processing callback, exiting",
                         agent.id
                     );
@@ -462,7 +464,7 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
                 // No responses yet - this is where we sleep and check again
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                println!("Agent {} channel disconnected", agent.id);
+                log::warn!("Agent {} channel disconnected", agent.id);
 
                 // Clean up any request IDs when the agent disconnects
                 if let Ok(mut request_ids) = MCP_AGENT_REQUEST_IDS.lock() {
@@ -477,7 +479,7 @@ pub fn run_agent_event_loop(agent: &mut Agent, shutdown_flag: Arc<AtomicBool>) {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    println!("Agent {} event loop terminated", agent.id);
+    log::debug!("Agent {} event loop terminated", agent.id);
 }
 
 fn handle_callback_result(
@@ -486,14 +488,14 @@ fn handle_callback_result(
 ) {
     match callback_result {
         Ok(result) => {
-            println!("Agent {} callback returned: {:?}", agent.id, result);
+            log::debug!("Agent {} callback returned: {:?}", agent.id, result);
 
             // Do not automatically send results back to MCP
             // The finalresult host function will handle that
             // When the agent calls the finalresult host function, it will use the request_id to send back the result
         }
         Err(e) => {
-            eprintln!("Agent {} callback error: {:?}", agent.id, e);
+            log::error!("Agent {} callback error: {:?}", agent.id, e);
 
             // Send error back to MCP server if there's an active request
             if let Some(request_id) = &agent.request_id {
@@ -501,7 +503,7 @@ fn handle_callback_result(
                 if let Ok(mut channels) = MCP_RESPONSE_CHANNELS.lock() {
                     if let Some(tx) = channels.remove(request_id) {
                         if let Err(e) = tx.send(error_msg) {
-                            eprintln!("Failed to send error response to MCP server: {}", e);
+                            log::error!("Failed to send error response to MCP server: {}", e);
                         }
                     }
                 }

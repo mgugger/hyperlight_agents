@@ -1,11 +1,11 @@
 use hyperlight_agents_common::traits::agent::Param;
 use rust_mcp_schema::{
-    Implementation, InitializeResult, LATEST_PROTOCOL_VERSION, ServerCapabilities,
-    ServerCapabilitiesTools,
+    Implementation, InitializeResult, ServerCapabilities, ServerCapabilitiesTools,
+    LATEST_PROTOCOL_VERSION,
 };
 use rust_mcp_sdk::mcp_server::{
-    HyperServerOptions,
     hyper_server::{self},
+    HyperServerOptions,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -99,10 +99,10 @@ impl McpServerManager {
         // Start the HTTP server with Hyper
         let server = hyper_server::create_server(server_details, handler, hyper_server_options);
 
-        println!("MCP server listening on http://{}", addr);
+        log::debug!("MCP server listening on http://{}", addr);
 
         if let Err(e) = server.start().await {
-            eprintln!("Server error: {:?}", e);
+            log::error!("Server error: {:?}", e);
         }
     }
 }

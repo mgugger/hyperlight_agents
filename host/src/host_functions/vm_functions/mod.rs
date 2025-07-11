@@ -160,11 +160,11 @@ impl VmManager {
                         thread::spawn(move || {
                             if let Err(e) = Self::handle_vm_connection(&mut stream, instances_clone)
                             {
-                                eprintln!("Error handling VM connection: {}", e);
+                                log::error!("Error handling VM connection: {}", e);
                             }
                         });
                     }
-                    Err(e) => eprintln!("Error accepting VSOCK connection: {}", e),
+                    Err(e) => log::error!("Error accepting VSOCK connection: {}", e),
                 }
             }
         });
@@ -310,10 +310,12 @@ impl VmManager {
             .status();
 
         match &result {
-            Ok(_) => println!("Successfully sent signal '{}' to process {}", signal, pid),
-            Err(e) => eprintln!(
+            Ok(_) => log::debug!("Successfully sent signal '{}' to process {}", signal, pid),
+            Err(e) => log::error!(
                 "Failed to send signal '{}' to process {}: {:?}",
-                signal, pid, e
+                signal,
+                pid,
+                e
             ),
         }
 
@@ -325,15 +327,15 @@ impl VmManager {
 
         match result {
             Ok(status) if status.success() => {
-                println!("Process {} is running", pid);
+                log::debug!("Process {} is running", pid);
                 true
             }
             Ok(_) => {
-                println!("Process {} is not running", pid);
+                log::debug!("Process {} is not running", pid);
                 false
             }
             Err(e) => {
-                eprintln!("Failed to check if process {} is running: {:?}", pid, e);
+                log::error!("Failed to check if process {} is running: {:?}", pid, e);
                 false
             }
         }

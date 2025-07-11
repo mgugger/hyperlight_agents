@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use log;
 use rust_mcp_sdk::mcp_client::{client_runtime, ClientHandler, ClientRuntime};
 use rust_mcp_sdk::schema::{
     CallToolRequestParams, ClientCapabilities, ContentBlock, Implementation,
@@ -42,7 +43,7 @@ fn start_host() -> io::Result<Child> {
     let root_dir = Path::new("../");
 
     // First, build the host executable to ensure it's up-to-date
-    println!("Building host executable...");
+    log::info!("Building host executable...");
     let build_status = Command::new("cargo")
         .current_dir(root_dir)
         .args(&["build", "--package", "hyperlight-agents-host"])
@@ -51,7 +52,7 @@ fn start_host() -> io::Result<Child> {
     if !build_status.success() {
         return Err(io::Error::new(io::ErrorKind::Other, "Failed to build host"));
     }
-    println!("Host executable built successfully.");
+    log::info!("Host executable built successfully.");
 
     // Then, run the built executable
     let host_executable = Path::new("./target/debug/hyperlight-agents-host");
@@ -67,7 +68,7 @@ fn start_host() -> io::Result<Child> {
         });
     }
 
-    println!("Starting host executable...");
+    log::info!("Starting host executable...");
     let child = command.spawn()?;
     thread::sleep(Duration::from_secs(10)); // Allow host to initialize
     Ok(child)
@@ -85,7 +86,7 @@ impl HostGuard {
 
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
-            println!("Stopping host...");
+            log::info!("Stopping host...");
             let _ = stop_host(&mut child); // Call your stop_host function
         }
     }
@@ -93,41 +94,41 @@ impl HostGuard {
 
 impl Drop for HostGuard {
     fn drop(&mut self) {
-        println!("HostGuard is being dropped. Attempting to stop the host...");
+        log::info!("HostGuard is being dropped. Attempting to stop the host...");
         self.stop();
     }
 }
 
 /// Helper function to stop the host server gracefully
 fn stop_host(child: &mut Child) -> io::Result<()> {
-    println!("Sending SIGINT signal to the host process group...");
+    log::info!("Sending SIGINT signal to the host process group...");
     let pgid = nix::unistd::Pid::from_raw(-(child.id() as i32)); // Negative PID targets the process group
     nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGINT)?;
 
     // Wait for the host process to terminate
-    println!("Waiting for the host process to terminate...");
+    log::info!("Waiting for the host process to terminate...");
     match child.wait() {
         Ok(status) => {
-            println!("Host process terminated with status: {:?}", status);
+            log::info!("Host process terminated with status: {:?}", status);
         }
         Err(e) => {
-            eprintln!("Failed to wait for host process termination: {:?}", e);
+            log::info!("Failed to wait for host process termination: {:?}", e);
         }
     }
 
     // Check if the process group is still running
     let output = Command::new("ps").arg("-o").arg("pid,pgid,comm").output()?;
     let ps_output = String::from_utf8_lossy(&output.stdout);
-    println!("Process group status:\n{}", ps_output);
+    log::info!("Process group status:\n{}", ps_output);
 
     if ps_output.contains(&pgid.to_string()) {
-        println!("Process group is still running. Sending SIGKILL...");
+        log::info!("Process group is still running. Sending SIGKILL...");
         nix::sys::signal::kill(pgid, nix::sys::signal::Signal::SIGKILL)?;
-        println!("SIGKILL signal sent to the process group.");
+        log::info!("SIGKILL signal sent to the process group.");
     }
 
     // Perform emergency cleanup for any orphaned Firecracker processes
-    println!("Performing emergency cleanup for orphaned Firecracker processes...");
+    log::info!("Performing emergency cleanup for orphaned Firecracker processes...");
     emergency_cleanup()?;
 
     Ok(())

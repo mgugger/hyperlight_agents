@@ -29,8 +29,10 @@ nix = "0.27"
 tempfile = "3.8"
 chrono = { version = "0.4", features = ["serde"] }
 memfd = "0.6"
+log = "0.4"
+env_logger = "0.10"
 
 [build-dependencies]
 anyhow = { version = "1.0" }
 cfg_aliases = "0.2.1"
-built = { version = "0.7.7", features = ["chrono", "git2"] }
+#built = { version = "0.7.7", features = ["chrono", "git2"] }

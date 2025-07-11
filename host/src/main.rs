@@ -9,10 +9,16 @@ use mcp::mcp_server;
 
 mod agents;
 mod host_functions;
+mod host_logger;
 mod mcp;
+
+use log::{debug, error, info};
 
 #[tokio::main]
 async fn main() -> hyperlight_host::Result<()> {
+    // Initialize unified host logger
+    host_logger::init_logger().expect("Failed to initialize host logger");
+
     // Create the MCP server manager
     let mcp_server_manager = mcp_server::McpServerManager::new();
 
@@ -30,23 +36,23 @@ async fn main() -> hyperlight_host::Result<()> {
     // Create VM manager and start VSOCK servers
     let vm_manager = Arc::new(VmManager::new());
     if let Err(e) = vm_manager.start_vsock_server(1234) {
-        eprintln!("Failed to start VSOCK server: {}", e);
+        error!("Failed to start VSOCK server: {}", e);
     } else {
-        println!("VSOCK server started on port 1234");
+        debug!("VSOCK server started on port 1234");
     }
 
     // Start HTTP proxy VSOCK server
     if let Err(e) = vm_manager.start_http_proxy_server(1235) {
-        eprintln!("Failed to start HTTP proxy VSOCK server: {}", e);
+        error!("Failed to start HTTP proxy VSOCK server: {}", e);
     } else {
-        println!("HTTP proxy VSOCK server started on port 1235");
+        debug!("HTTP proxy VSOCK server started on port 1235");
     }
 
-    // Start HTTP proxy VSOCK server
+    // Start log listener VSOCK server
     if let Err(e) = vm_manager.start_log_listener_server(1236) {
-        eprintln!("Failed to start HTTP proxy VSOCK server: {}", e);
+        error!("Failed to start HTTP proxy VSOCK server: {}", e);
     } else {
-        println!("HTTP proxy VSOCK server started on port 1236");
+        debug!("HTTP proxy VSOCK server started on port 1236");
     }
 
     let agent_ids: Vec<String> = std::fs::read_dir("./guest/target/x86_64-unknown-none/debug/")
@@ -59,7 +65,7 @@ async fn main() -> hyperlight_host::Result<()> {
                     && !path.to_string_lossy().ends_with(".d")
                     && !path.to_string_lossy().ends_with(".cargo-lock")
                 {
-                    println!("Found agent binary: {}", path.display());
+                    debug!("Found agent binary: {}", path.display());
                     Some(path.to_string_lossy().into_owned())
                 } else {
                     None
@@ -70,7 +76,7 @@ async fn main() -> hyperlight_host::Result<()> {
     let mut agents = Vec::new();
 
     for agent_id in agent_ids {
-        println!("Creating agent for: {}", agent_id);
+        debug!("Creating agent for: {}", agent_id);
         match agents::agent::create_agent(
             agent_id.to_string(),
             http_client.clone(),
@@ -78,11 +84,11 @@ async fn main() -> hyperlight_host::Result<()> {
             vm_manager.clone(),
         ) {
             Ok(agent) => {
-                println!("✓ Agent created successfully: {}", agent.name);
+                debug!("✓ Agent created successfully: {}", agent.name);
                 agents.push(agent);
             }
             Err(e) => {
-                println!("✗ Failed to create agent {}: {:?}", agent_id, e);
+                error!("✗ Failed to create agent {}: {:?}", agent_id, e);
                 return Err(e);
             }
         }
@@ -118,11 +124,11 @@ async fn main() -> hyperlight_host::Result<()> {
     // Create the MCP server with HTTP and SSE support
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
 
-    println!("\n=================================================");
-    println!("MCP Server starting at http://127.0.0.1:3000/sse");
-    println!("Agents registered: {}", tx_senders.len());
-    println!("Press Ctrl+C to shutdown gracefully");
-    println!("=================================================\n");
+    debug!("\n=================================================");
+    debug!("MCP Server starting at http://127.0.0.1:3000/sse");
+    info!("Agents registered: {}", tx_senders.len());
+    info!("Press Ctrl+C to shutdown");
+    info!("=================================================\n");
 
     // Start the MCP server with the rust-mcp-sdk (now async)
     // Create a clone of vm_manager for cleanup
@@ -135,10 +141,10 @@ async fn main() -> hyperlight_host::Result<()> {
         // Run the server in a select with the shutdown signal
         tokio::select! {
             _ = mcp_server_manager.start_server(addr) => {
-                println!("MCP server completed naturally");
+                debug!("MCP server completed naturally");
             }
             _ = &mut shutdown_rx => {
-                println!("MCP server received shutdown signal");
+                debug!("MCP server received shutdown signal");
             }
         }
     });
@@ -150,12 +156,12 @@ async fn main() -> hyperlight_host::Result<()> {
     tokio::select! {
         result = server_handle => {
             match result {
-                Ok(_) => println!("MCP server task completed successfully"),
-                Err(e) => println!("MCP server task failed: {:?}", e),
+                Ok(_) => info!("MCP server task completed successfully"),
+                Err(e) => error!("MCP server task failed: {:?}", e),
             }
         }
         _ = tokio::signal::ctrl_c() => {
-            println!("Received Ctrl+C signal. Initiating graceful shutdown...");
+            info!("Received Ctrl+C signal. Initiating graceful shutdown...");
 
             // Send shutdown signal to the server
             let _ = shutdown_tx.send(());
@@ -166,44 +172,40 @@ async fn main() -> hyperlight_host::Result<()> {
             // Abort the server task if it's still running
             abort_handle.abort();
 
-            println!("MCP server shutdown initiated. Waiting for server task to abort...");
+            info!("MCP server shutdown initiated. Waiting for server task to abort...");
         }
     }
 
     // Perform cleanup
-    println!("Shutting down VM Manager... Ensuring all VMs are terminated.");
+    info!("Shutting down VM Manager... Ensuring all VMs are terminated.");
     vm_manager_cleanup.shutdown();
 
     // Perform emergency cleanup as well
     VmManager::emergency_cleanup();
 
     // Signal all agent threads to shutdown
-    println!("Signaling agent threads to shutdown... Setting shutdown flag.");
+    info!("Signaling agent threads to shutdown... Setting shutdown flag.");
     shutdown_flag.store(true, Ordering::Relaxed);
 
     // Drop all tx_senders to disconnect agent channels (helps threads exit faster)
-    println!(
-        "Dropping agent senders to disconnect channels... This will help threads exit faster."
-    );
+    debug!("Dropping agent senders to disconnect channels... This will help threads exit faster.");
     drop(tx_senders);
 
     // Wait for all agents to complete (with timeout)
-    println!(
-        "Waiting for agent threads to complete... This may take some time if threads are busy."
-    );
+    debug!("Waiting for agent threads to complete... This may take some time if threads are busy.");
     let mut completed = 0;
     for handle in handles {
         match handle.join() {
             Ok(_) => {
                 completed += 1;
-                println!("Agent thread completed (total: {})", completed);
+                debug!("Agent thread completed (total: {})", completed);
             }
-            Err(e) => eprintln!("Agent thread panicked: {:?}", e),
+            Err(e) => error!("Agent thread panicked: {:?}", e),
         }
     }
-    println!("All agent threads completed: {}", completed);
+    info!("All agent threads completed: {}", completed);
 
-    println!("Application shutdown complete. All resources have been cleaned up.");
+    info!("Application shutdown complete. All resources have been cleaned up.");
 
     Ok(())
 }
