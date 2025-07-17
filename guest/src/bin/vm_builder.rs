@@ -80,6 +80,47 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
                         ReturnType::String,
                     )
                 },
+                "spawn_command" => {
+                    let params = vec![
+                        ParameterValue::String(vm_id),
+                        ParameterValue::String(command),
+                        ParameterValue::String(
+                            AgentConstants::ProcessVmCommandResult.as_ref().to_string(),
+                        ),
+                    ];
+                    call_host_function::<String>(
+                        constants::HostMethod::SpawnCommand.as_ref(),
+                        Some(params),
+                        ReturnType::String,
+                    )
+                },
+                "list_spawned_processes" => {
+                    let params = vec![
+                        ParameterValue::String(vm_id),
+                        ParameterValue::String(
+                            AgentConstants::ProcessVmListResult.as_ref().to_string(),
+                        ),
+                    ];
+                    call_host_function::<String>(
+                        constants::HostMethod::ListSpawnedProcesses.as_ref(),
+                        Some(params),
+                        ReturnType::String,
+                    )
+                },
+                "stop_spawned_process" => {
+                    let params = vec![
+                        ParameterValue::String(vm_id),
+                        ParameterValue::String(command), // command here is process_id
+                        ParameterValue::String(
+                            AgentConstants::ProcessVmCommandResult.as_ref().to_string(),
+                        ),
+                    ];
+                    call_host_function::<String>(
+                        constants::HostMethod::StopSpawnedProcess.as_ref(),
+                        Some(params),
+                        ReturnType::String,
+                    )
+                },
                 "destroy_vm" => {
                     let params = vec![
                         ParameterValue::String(vm_id),
@@ -108,7 +149,7 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
                 },
                 _ => return Err(HyperlightGuestError::new(
                     ErrorCode::GuestFunctionParameterTypeMismatch,
-                    format!("VM action invalid, must be one of: create_vm, execute_vm_command, destroy_vm, list_vms. Got {:?}", action).to_string(),
+                    format!("VM action invalid, must be one of: create_vm, execute_vm_command, spawn_command, list_spawned_processes, stop_spawned_process, destroy_vm, list_vms. Got {:?}", action).to_string(),
                 )),
             };
 
@@ -148,7 +189,7 @@ fn guest_get_params(_function_call: &FunctionCall) -> Result<Vec<u8>> {
     let params_json = r#"[
         {
             "name": "action",
-            "description": "Action to perform, must be one of: create_vm, execute_vm_command, destroy_vm, list_vms",
+            "description": "Action to perform, must be one of: create_vm, execute_vm_command, spawn_command, list_spawned_processes, stop_spawned_process, destroy_vm, list_vms",
             "type": "string",
             "required": true
         },
@@ -156,11 +197,11 @@ fn guest_get_params(_function_call: &FunctionCall) -> Result<Vec<u8>> {
             "name": "vm_id",
             "description": "ID of the VM to operate on",
             "type": "string",
-            "required": false
+            "required": true
         },
         {
             "name": "command",
-            "description": "Command to execute in the VM",
+            "description": "Command to execute in the VM, arguments for spawn_command, or process_id for stop_spawned_process",
             "type": "string",
             "required": false
         }

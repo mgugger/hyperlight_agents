@@ -668,6 +668,7 @@ fn run_host(paths: &Paths) -> Result<()> {
     let status = Command::new("cargo")
         .args(["run", "-p", "hyperlight-agents-host"])
         .current_dir(&paths.project_root)
+        .env("RUST_LOG", "debug")
         .status()?;
     if !status.success() {
         return Err(anyhow!("Host application exited with error"));

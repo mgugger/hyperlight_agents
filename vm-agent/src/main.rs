@@ -3,12 +3,32 @@ use std::io::Read;
 use std::io::Write;
 mod logger;
 mod command_execution;
-use command_execution::{execute_command, CommandRequest, CommandResponse};
+use command_execution::{execute_command, CommandResponse};
 mod http_proxy;
 use http_proxy::HttpProxyResponse;
 use http_proxy::start_http_proxy_server;
-use http_proxy::VsockRequest;
-use http_proxy::VsockResponse;
+use serde::{Serialize, Deserialize};
+use hyperlight_agents_common::VmCommandMode;
+use hyperlight_agents_common::VmCommand;
+
+/// VsockRequest enum for proxy requests
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum VsockRequest {
+    Command(VmCommand),
+    HttpProxy(http_proxy::HttpProxyRequest),
+}
+
+/// VsockResponse enum for proxy responses
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum VsockResponse {
+    Command(command_execution::CommandResponse),
+    HttpProxy(HttpProxyResponse),
+    SpawnedProcess(command_execution::SpawnedProcessInfo),
+    SpawnedProcessList(Vec<command_execution::SpawnedProcessInfo>),
+    StoppedProcess(command_execution::StopProcessResponse),
+}
 
 fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::error::Error>> {
     log::debug!("=== NEW CONNECTION HANDLER STARTED ===");
@@ -59,10 +79,28 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
                 if let Ok(request) = serde_json::from_str::<VsockRequest>(&total_message) {
                     log::debug!("SUCCESS: JSON parsed as VsockRequest");
                     let response = match request {
-                        VsockRequest::Command(cmd_req) => {
-                            log::debug!("Executing command: '{}'", cmd_req.command);
-                            let cmd_response = command_execution::execute_command(&cmd_req.command);
-                            VsockResponse::Command(cmd_response)
+                        VsockRequest::Command(vm_cmd) => {
+                            log::debug!("Received Command: '{:?}'", vm_cmd);
+                            match vm_cmd.mode {
+                                VmCommandMode::Foreground => {
+                                    // Foreground: run and wait for result
+                                    let cmd_response = command_execution::execute_command(&vm_cmd.command, 15);
+                                    VsockResponse::Command(cmd_response)
+                                }
+                                VmCommandMode::Spawn => {
+                                    // Background: spawn and return process info
+                                    let result = command_execution::spawn_command_struct(&vm_cmd);
+                                    match result {
+                                        Some(info) => VsockResponse::SpawnedProcess(info),
+                                        None => VsockResponse::StoppedProcess(command_execution::StopProcessResponse {
+                                            id: 0,
+                                            exit_code: -1,
+                                            stdout: String::new(),
+                                            stderr: "Failed to spawn process".to_string(),
+                                        }),
+                                    }
+                                }
+                            }
                         }
                         VsockRequest::HttpProxy(proxy_req) => {
                             log::debug!(
@@ -78,6 +116,7 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
                             };
                             VsockResponse::HttpProxy(error_response)
                         }
+
                     };
                     let response_json = serde_json::to_string(&response)?;
 
@@ -99,32 +138,8 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
                         }
                         response_sent = true;
                         break;
-                }
-                // If VsockRequest parsing fails, try old CommandRequest format for backward compatibility
-                else if let Ok(cmd_request) = serde_json::from_str::<CommandRequest>(&total_message) {
-                    log::debug!("SUCCESS: JSON parsed as legacy CommandRequest");
-                    log::debug!("Executing command: '{}'", cmd_request.command);
-                    let cmd_response = execute_command(&cmd_request.command);
-                    let response_json = serde_json::to_string(&cmd_response)?;
-
-                    log::debug!("Sending response: {}", response_json);
-                    match stream.write_all(response_json.as_bytes()) {
-                        Ok(_) => {
-                            log::debug!("Response written to stream");
-                            match stream.flush() {
-                                Ok(_) => {
-                                    log::debug!("Response flushed successfully");
-                                    log::debug!("Connection handler will now close");
-                                }
-                                Err(e) => log::error!("Failed to flush response: {}", e),
-                            }
-                        }
-                        Err(e) => log::error!("Failed to send response: {}", e),
-                    }
-                    response_sent = true;
-                    break;
                 } else {
-                    log::debug!("JSON parse failed for both formats - continuing to read more data");
+                    log::debug!("JSON parse failed");
                 }
 
                 // Reset buffer for next read
@@ -170,8 +185,7 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
 
     // If we accumulated data but couldn't parse it as JSON, send error (only if no response was sent)
     if !response_sent && !total_message.is_empty() && !total_message.trim().is_empty() {
-        if serde_json::from_str::<VsockRequest>(&total_message).is_err()
-            && serde_json::from_str::<CommandRequest>(&total_message).is_err() {
+        if serde_json::from_str::<VsockRequest>(&total_message).is_err() {
             log::error!(
                 "FINAL ERROR: Failed to parse accumulated JSON: '{}'",
                 total_message
@@ -195,9 +209,12 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize the bounded vsock logger and combined logger with background task
+    let log_level = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|lvl| lvl.parse::<log::LevelFilter>().ok())
+        .unwrap_or(log::LevelFilter::Info);
     let vsock_logger = logger::bounded_logger::BoundedVsockLogger::init(1236).await;
-    logger::bounded_logger::init_combined_logger(vsock_logger.clone()).expect("Failed to initialize logger");
+    logger::bounded_logger::init_combined_logger(vsock_logger.clone(), log_level).expect("Failed to initialize logger");
 
     log::info!("=== VM AGENT STARTING ===");
     log::debug!("Starting VM Agent with VSOCK server on port 1234 and HTTP proxy on port 8080");
@@ -299,6 +316,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Wait for either task to complete
+    log::debug!("Waiting for proxy and vsock tasks to complete...");
     tokio::select! {
         proxy_result = proxy_handle => {
             match proxy_result {
@@ -320,5 +338,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    log::debug!("Proxy and vsock tasks completed");
     Ok(())
 }

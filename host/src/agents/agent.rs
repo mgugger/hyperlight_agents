@@ -313,6 +313,156 @@ pub fn register_host_functions(
         all_syscalls.clone(),
     )?;
 
+    // Register SpawnVMProcess host method
+    let vm_manager_clone = vm_manager.clone();
+    let tx_clone = tx.clone();
+
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::SpawnCommand.as_ref(),
+        move |vm_id: String, process_args: String, callback_name: String| {
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match vm_manager.spawn_command(&vm_id, process_args).await {
+                        Ok(resp) => resp,
+                        Err(e) => format!("VM process spawn failed: {}", e),
+                    }
+                });
+
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    log::error!("Failed to send VM process spawn response: {:?}", e);
+                }
+            });
+
+            Ok("VM process spawn initiated".to_string())
+        },
+        all_syscalls.clone(),
+    )?;
+
+    // Register ListSpawnedProcesses host method
+    let vm_manager_clone = vm_manager.clone();
+    let tx_clone = tx.clone();
+
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::ListSpawnedProcesses.as_ref(),
+        move |vm_id: String, callback_name: String| {
+            log::debug!("List spawned processes initiated for vm {}", vm_id);
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match vm_manager.list_spawned_processes(&vm_id).await {
+                        Ok(list) => {
+                            serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())
+                        }
+                        Err(e) => format!("List spawned processes failed: {}", e),
+                    }
+                });
+
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    log::error!("Failed to send list spawned processes response: {:?}", e);
+                }
+            });
+
+            Ok("List spawned processes initiated".to_string())
+        },
+        all_syscalls.clone(),
+    )?;
+
+    let vm_manager_clone = vm_manager.clone();
+    let tx_clone = tx.clone();
+
+    // Register SpawnCommand host method
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::SpawnCommand.as_ref(),
+        move |vm_id: String, command_args: String, callback_name: String| {
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match vm_manager.spawn_command(&vm_id, command_args).await {
+                        Ok(resp) => resp,
+                        Err(e) => format!("Spawn command failed: {}", e),
+                    }
+                });
+
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    log::error!("Failed to send spawn command response: {:?}", e);
+                }
+            });
+
+            Ok("Spawn command initiated".to_string())
+        },
+        all_syscalls.clone(),
+    )?;
+
+    // Register ListSpawnedProcesses host method
+    let vm_manager_clone = vm_manager.clone();
+    let tx_clone = tx.clone();
+
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::ListSpawnedProcesses.as_ref(),
+        move |vm_id: String, callback_name: String| {
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match vm_manager.list_spawned_processes(&vm_id).await {
+                        Ok(list) => {
+                            serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())
+                        }
+                        Err(e) => format!("List spawned processes failed: {}", e),
+                    }
+                });
+
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    log::error!("Failed to send list spawned processes response: {:?}", e);
+                }
+            });
+
+            Ok("List spawned processes initiated".to_string())
+        },
+        all_syscalls.clone(),
+    )?;
+
+    // Register StopSpawnedProcess host method
+    let vm_manager_clone = vm_manager.clone();
+    let tx_clone = tx.clone();
+
+    sandbox.register_with_extra_allowed_syscalls(
+        constants::HostMethod::StopSpawnedProcess.as_ref(),
+        move |vm_id: String, process_id: String, callback_name: String| {
+            let vm_manager = vm_manager_clone.clone();
+            let sender = tx_clone.clone();
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let response = rt.block_on(async {
+                    match vm_manager.stop_spawned_process(&vm_id, &process_id).await {
+                        Ok(resp) => resp,
+                        Err(e) => format!("Stop spawned process failed: {}", e),
+                    }
+                });
+
+                if let Err(e) = sender.send((Some(response), callback_name)) {
+                    log::error!("Failed to send stop spawned process response: {:?}", e);
+                }
+            });
+
+            Ok("Stop spawned process initiated".to_string())
+        },
+        all_syscalls.clone(),
+    )?;
+
     let vm_manager_clone = vm_manager.clone();
     let tx_clone = tx.clone();
 

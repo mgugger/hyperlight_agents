@@ -71,6 +71,8 @@ name = "hyperlight-agents-common"
 version = "0.1.0"
 dependencies = [
  "hyperlight-common",
+ "serde",
+ "serde_json",
  "strum",
  "strum_macros",
 ]

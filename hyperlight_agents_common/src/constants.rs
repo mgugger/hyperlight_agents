@@ -7,7 +7,10 @@ pub enum HostMethod {
     CreateVM,
     DestroyVM,
     ListVMs,
-    ExecuteVMCommand
+    ExecuteVMCommand,
+    SpawnCommand,
+    ListSpawnedProcesses,
+    StopSpawnedProcess,
 }
 
 #[derive(Debug, PartialEq, AsRefStr)]
@@ -15,5 +18,5 @@ pub enum GuestMethod {
     GetName,
     GetDescription,
     GetParams,
-    Run
+    Run,
 }

@@ -1,5 +1,6 @@
-use super::{VmCommand, VmCommandResult, VmInstance, VmManager};
+use super::{VmInstance, VmManager};
 use chrono::Utc;
+use hyperlight_agents_common::{VmCommand, VmCommandMode, VmCommandResult};
 use memfd::{Memfd, MemfdOptions};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -93,8 +94,8 @@ pub(crate) fn start_firecracker_vm(
             "is_read_only": false
         }],
         "machine-config": {
-            "vcpu_count": 1,
-            "mem_size_mib": 256,
+            "vcpu_count": 2,
+            "mem_size_mib": 512,
             "smt": false
         },
         "vsock": {
@@ -204,10 +205,9 @@ fn start_command_processor(
                     } else {
                         let mut h_buf = [0; 256];
                         if stream.read(&mut h_buf).is_ok() {
-                            let command_json = serde_json::json!({
-                                "command": format!("{} {}", command.command, command.args.join(" "))
-                            });
-                            let command_str = command_json.to_string();
+                            let vsock_request =
+                                crate::host_functions::vm_functions::VsockRequest::Command(command);
+                            let command_str = serde_json::to_string(&vsock_request).unwrap();
 
                             if stream.write_all(command_str.as_bytes()).is_ok()
                                 && stream.flush().is_ok()
@@ -286,6 +286,7 @@ pub(crate) async fn execute_command_in_vm_internal(
         args,
         working_dir,
         timeout_seconds,
+        mode: VmCommandMode::Foreground,
     };
 
     command_sender
@@ -333,6 +334,184 @@ pub(crate) async fn execute_command_in_vm_internal(
     }
 }
 
+/// Spawns a command in the VM agent and returns the command ID (or PID if agent returns it)
+pub(crate) async fn spawn_command_internal(
+    manager: &VmManager,
+    vm_id: &str,
+    command: String,
+    args: Vec<String>,
+    working_dir: Option<String>,
+    timeout_seconds: Option<u64>,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let cmd_id = format!("cmd_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let (command_sender, result_receiver) = {
+        let instances = manager.instances.lock().unwrap();
+        if let Some(vm_instance) = instances.get(vm_id) {
+            let (tx, rx) = mpsc::channel();
+            vm_instance
+                .result_receiver
+                .lock()
+                .unwrap()
+                .insert(cmd_id.clone(), tx);
+            (vm_instance.command_sender.clone(), rx)
+        } else {
+            return Err(format!("VM {} not found", vm_id).into());
+        }
+    };
+
+    let vm_command = VmCommand {
+        id: cmd_id.clone(),
+        command,
+        args,
+        working_dir,
+        timeout_seconds,
+        mode: VmCommandMode::Spawn,
+    };
+
+    command_sender
+        .send(vm_command)
+        .map_err(|e| format!("Failed to send spawn command to VM: {}", e))?;
+
+    // For spawn, we just return the command id immediately
+    Ok(cmd_id)
+}
+
+/// Lists spawned processes in the VM agent
+pub(crate) async fn list_spawned_processes_internal(
+    manager: &VmManager,
+    vm_id: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let (command_sender, result_receiver) = {
+        let instances = manager.instances.lock().unwrap();
+        if let Some(vm_instance) = instances.get(vm_id) {
+            let (tx, rx) = mpsc::channel();
+            // Use a special id for listing
+            vm_instance
+                .result_receiver
+                .lock()
+                .unwrap()
+                .insert("list_spawned_processes".to_string(), tx);
+            (vm_instance.command_sender.clone(), rx)
+        } else {
+            return Err(format!("VM {} not found", vm_id).into());
+        }
+    };
+
+    let vm_command = VmCommand {
+        id: "list_spawned_processes".to_string(),
+        command: "list_spawned_processes".to_string(),
+        args: vec![],
+        working_dir: None,
+        timeout_seconds: Some(10),
+        mode: VmCommandMode::Foreground,
+    };
+
+    command_sender
+        .send(vm_command)
+        .map_err(|e| format!("Failed to send list_spawned_processes to VM: {}", e))?;
+
+    let timeout_duration = Duration::from_secs(10);
+    let start_time = Instant::now();
+
+    loop {
+        match result_receiver.try_recv() {
+            Ok(result) => {
+                // Expect stdout to be a JSON array of process IDs
+                log::debug!(
+                    "Result from list spawned processes initiated for {:?}",
+                    result
+                );
+                let trimmed = result.stdout.trim();
+                if trimmed.is_empty() {
+                    return Ok(Vec::new());
+                }
+                match serde_json::from_str::<Vec<String>>(&trimmed) {
+                    Ok(list) => return Ok(list),
+                    Err(e) => {
+                        return Err(
+                            format!("Failed to parse process list from VM agent: {:?}", e).into(),
+                        )
+                    }
+                }
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                if start_time.elapsed() > timeout_duration {
+                    return Err("List spawned processes timed out".into());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err("VM disconnected while waiting for process list".into());
+            }
+        }
+    }
+}
+
+/// Stops a spawned process in the VM agent
+pub(crate) async fn stop_spawned_process_internal(
+    manager: &VmManager,
+    vm_id: &str,
+    process_id: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let cmd_id = format!("stop_{}", process_id);
+
+    let (command_sender, result_receiver) = {
+        let instances = manager.instances.lock().unwrap();
+        if let Some(vm_instance) = instances.get(vm_id) {
+            let (tx, rx) = mpsc::channel();
+            vm_instance
+                .result_receiver
+                .lock()
+                .unwrap()
+                .insert(cmd_id.clone(), tx);
+            (vm_instance.command_sender.clone(), rx)
+        } else {
+            return Err(format!("VM {} not found", vm_id).into());
+        }
+    };
+
+    let vm_command = VmCommand {
+        id: cmd_id.clone(),
+        command: "stop_spawned_process".to_string(),
+        args: vec![process_id.to_string()],
+        working_dir: None,
+        timeout_seconds: Some(10),
+        mode: VmCommandMode::Foreground,
+    };
+
+    command_sender
+        .send(vm_command)
+        .map_err(|e| format!("Failed to send stop_spawned_process to VM: {}", e))?;
+
+    let timeout_duration = Duration::from_secs(10);
+    let start_time = Instant::now();
+
+    loop {
+        match result_receiver.try_recv() {
+            Ok(result) => {
+                if result.exit_code == 0 {
+                    return Ok(result.stdout);
+                } else {
+                    return Err(format!(
+                        "Stop process failed with exit code {}: {}",
+                        result.exit_code, result.stderr
+                    )
+                    .into());
+                }
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                if start_time.elapsed() > timeout_duration {
+                    return Err("Stop spawned process timed out".into());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err("VM disconnected while waiting for stop process result".into());
+            }
+        }
+    }
+}
+
 pub(crate) async fn destroy_vm_internal(
     manager: &VmManager,
     vm_id: &str,
@@ -363,6 +542,7 @@ pub(crate) async fn check_vm_health_internal(manager: &VmManager, vm_id: &str) -
             args: vec!["healthy".to_string()],
             working_dir: None,
             timeout_seconds: Some(5),
+            mode: VmCommandMode::Foreground,
         };
         return vm_instance.command_sender.send(health_cmd).is_ok();
     }

@@ -70,7 +70,7 @@ fn start_host() -> io::Result<Child> {
 
     log::info!("Starting host executable...");
     let child = command.spawn()?;
-    thread::sleep(Duration::from_secs(10)); // Allow host to initialize
+    thread::sleep(Duration::from_secs(5)); // Allow host to initialize
     Ok(child)
 }
 
@@ -153,12 +153,12 @@ fn emergency_cleanup() -> io::Result<()> {
     Ok(())
 }
 
-async fn execute_command(client: &Arc<ClientRuntime>, command: &str) -> String {
-    let params =
-        json!({"action": "execute_vm_command", "vm_id": "integration_test_vm", "command": command})
-            .as_object()
-            .unwrap()
-            .clone();
+async fn execute_command(client: &Arc<ClientRuntime>, command: &str, action: &str) -> String {
+    println!("Sending command: {}", command);
+    let params = json!({"action": action, "vm_id": "integration_test_vm", "command": command})
+        .as_object()
+        .unwrap()
+        .clone();
     let request = CallToolRequestParams {
         name: "vm_builder".to_string(),
         arguments: Some(params),
@@ -245,7 +245,7 @@ async fn integration_test() {
 
     // execute vm command
     let command = "free -m";
-    let res = execute_command(&client, command).await;
+    let res = execute_command(&client, command, "execute_vm_command").await;
     assert!(
         res.contains("buff/cache"),
         "Expected \"buff/cache\" response for command \"{}\", got {:?}",
@@ -254,7 +254,7 @@ async fn integration_test() {
     );
     // test http call
     let command = "curl http://www.google.com/generate_204";
-    let res = execute_command(&client, command).await;
+    let res = execute_command(&client, command, "execute_vm_command").await;
     assert!(
         res == "",
         "Expected empty response for command \"{}\", got {:?}",
@@ -263,10 +263,73 @@ async fn integration_test() {
     );
     // test https call
     let command = "curl https://www.google.com/generate_204";
-    let res = execute_command(&client, command).await;
+    let res = execute_command(&client, command, "execute_vm_command").await;
     assert!(
         res == "",
         "Expected empty response for command \"{}\", got {:?}",
+        command,
+        res
+    );
+
+    // install caddy
+    let command = "apk add --no-cache caddy";
+    let res = execute_command(&client, command, "execute_vm_command").await;
+    assert!(
+        res.contains("OK:"),
+        "Expected OK response for command \"{}\", got {:?}",
+        command,
+        res
+    );
+
+    // which caddy
+    let command = "which caddy";
+    let res = execute_command(&client, command, "execute_vm_command").await;
+    let caddy_bin = "/usr/sbin/caddy";
+    assert!(
+        res.contains(caddy_bin),
+        "Expected {} response for command \"{}\", got {:?}",
+        caddy_bin,
+        command,
+        res
+    );
+
+    // create index.html
+    let command = "echo 'hello from caddy' > index.html";
+    let res = execute_command(&client, command, "execute_vm_command").await;
+    assert!(
+        res.trim().is_ascii(),
+        "Expected empty response for command \"{}\", got {:?}",
+        command,
+        res
+    );
+
+    // // run caddy
+    let command = format!("{} file-server --listen :9999 --browse=false", caddy_bin);
+    let res = execute_command(&client, &command, "spawn_command").await;
+    assert!(
+        res.contains("cmd_"),
+        "Expected cmd_ response for command \"{}\", got {:?}",
+        command,
+        res
+    );
+
+    // //thread::sleep(Duration::from_secs(5));
+
+    // // check caddy process is spawned
+    let command = "ps aux";
+    let res = execute_command(&client, command, "execute_vm_command").await;
+    assert!(
+        res.trim().contains("caddy"),
+        "Expected non-empty response for spawned commands , got {:?}",
+        res
+    );
+
+    // // run caddy
+    let command = "curl http://localhost:9999/index.html";
+    let res = execute_command(&client, command, "execute_vm_command").await;
+    assert!(
+        res.contains("hello from caddy"),
+        "Expected cmd_ response for command \"{}\", got {:?}",
         command,
         res
     );

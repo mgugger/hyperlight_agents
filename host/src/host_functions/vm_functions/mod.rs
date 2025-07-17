@@ -28,28 +28,12 @@ pub struct VmInstance {
     pub rootfs_symlink: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VmCommand {
-    pub id: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub working_dir: Option<String>,
-    pub timeout_seconds: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VmCommandResult {
-    pub id: String,
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-    pub error: Option<String>,
-}
+use hyperlight_agents_common::{VmCommand, VmCommandMode, VmCommandResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub(crate) enum VsockRequest {
-    Command(serde_json::Value),
+    Command(VmCommand),
     HttpProxy(http_proxy::HttpProxyRequest),
 }
 
@@ -129,6 +113,29 @@ impl VmManager {
             self.shutdown_flag.clone(),
             port,
         )
+    }
+
+    pub async fn spawn_command(
+        &self,
+        vm_id: &str,
+        command: String,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        firecracker::spawn_command_internal(self, vm_id, command, vec![], None, Some(30)).await
+    }
+
+    pub async fn list_spawned_processes(
+        &self,
+        vm_id: &str,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        firecracker::list_spawned_processes_internal(self, vm_id).await
+    }
+
+    pub async fn stop_spawned_process(
+        &self,
+        vm_id: &str,
+        process_id: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        firecracker::stop_spawned_process_internal(self, vm_id, process_id).await
     }
 
     pub fn start_log_listener_server(

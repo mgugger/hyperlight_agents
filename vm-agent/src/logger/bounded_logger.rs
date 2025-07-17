@@ -57,17 +57,18 @@ impl BoundedVsockLogger {
 /// Combined logger that logs to both console and vsock (via bounded channel).
 pub struct CombinedLogger {
     vsock_logger: Arc<BoundedVsockLogger>,
+    level: log::LevelFilter,
 }
 
 impl CombinedLogger {
-    pub fn new(vsock_logger: Arc<BoundedVsockLogger>) -> Self {
-        Self { vsock_logger }
+    pub fn new(vsock_logger: Arc<BoundedVsockLogger>, level: log::LevelFilter) -> Self {
+        Self { vsock_logger, level }
     }
 }
 
 impl log::Log for CombinedLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Info
+        metadata.level() <= self.level
     }
 
     fn log(&self, record: &Record) {
@@ -85,9 +86,9 @@ impl log::Log for CombinedLogger {
 }
 
 /// Initializes the global logger with the bounded vsock logger.
-pub fn init_combined_logger(vsock_logger: Arc<BoundedVsockLogger>) -> Result<(), SetLoggerError> {
-    let logger = Box::leak(Box::new(CombinedLogger::new(vsock_logger)));
+pub fn init_combined_logger(vsock_logger: Arc<BoundedVsockLogger>, log_level: LevelFilter) -> Result<(), SetLoggerError> {
+    let logger = Box::leak(Box::new(CombinedLogger::new(vsock_logger, log_level)));
     log::set_logger(logger)?;
-    log::set_max_level(LevelFilter::Info);
+    log::set_max_level(log_level);
     Ok(())
 }

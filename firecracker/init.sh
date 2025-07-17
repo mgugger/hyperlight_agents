@@ -18,8 +18,11 @@ modprobe vmw_vsock_virtio_transport 2>/dev/null || true
 # Configure HTTP proxy environment variables
 export http_proxy=http://127.0.0.1:8080
 export https_proxy=http://127.0.0.1:8080
+export no_proxy=127.0.0.1,localhost
 export HTTP_PROXY=http://127.0.0.1:8080
 export HTTPS_PROXY=http://127.0.0.1:8080
+export NO_PROXY=127.0.0.1,localhost
+export RUST_LOG=debug
 
 echo "Starting VM Agent on VSOCK port 1234..."
 echo "HTTP proxy configured at http://127.0.0.1:8080"

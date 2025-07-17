@@ -21,6 +21,8 @@ hyper = { version = "0.14", features = ["full"] }
 futures = "0.3"
 log = "0.4"
 env_logger = "0.10"
+lazy_static = "1.4"
+hyperlight-agents-common = { path = "../hyperlight_agents_common", version = "0.1.0" }
 
 [[bin]]
 name = "vm-agent"

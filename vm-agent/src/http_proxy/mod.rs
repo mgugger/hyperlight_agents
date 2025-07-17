@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::io::{Read, Write};
+use crate::{VsockRequest, VsockResponse};
 
 use hyper::{Body, Request, Response, Server, StatusCode};
 use hyper::service::{make_service_fn, service_fn};
@@ -27,21 +28,7 @@ pub struct HttpProxyResponse {
     pub error: Option<String>,
 }
 
-/// VsockRequest enum for proxy requests
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum VsockRequest {
-    Command(super::CommandRequest),
-    HttpProxy(HttpProxyRequest),
-}
 
-/// VsockResponse enum for proxy responses
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum VsockResponse {
-    Command(super::CommandResponse),
-    HttpProxy(HttpProxyResponse),
-}
 
 /// HTTP client for vsock proxying
 pub struct VsockHttpClient {}
