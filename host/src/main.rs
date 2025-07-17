@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use host_functions::vm_functions::VmManager;
+
 use mcp::mcp_server;
 
 mod agents;
@@ -14,24 +15,49 @@ mod mcp;
 
 use log::{debug, error, info};
 
+use opentelemetry::global::{self};
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::{Protocol, WithExportConfig};
+use opentelemetry_sdk::Resource;
+use reqwest::Client;
+
 #[tokio::main]
 async fn main() -> hyperlight_host::Result<()> {
     // Initialize unified host logger
     host_logger::init_logger();
 
+    let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_protocol(Protocol::Grpc)
+        .build()
+        .unwrap();
+
+    let resource = Resource::builder()
+        .with_attributes(vec![
+            KeyValue::new("service.name", "hyperlight_agents"),
+            KeyValue::new("service.namespace", "my-application-group"),
+            KeyValue::new("deployment.environment", "production"),
+        ])
+        .build();
+
+    // Create a tracer provider with the exporter
+    let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_batch_exporter(otlp_exporter)
+        .with_resource(resource)
+        .build();
+
+    // Set it as the global provider
+    global::set_tracer_provider(tracer_provider);
+
     // Create the MCP server manager
     let mcp_server_manager = mcp_server::McpServerManager::new();
 
-    // Initialize the MCP agent metadata global state
-    // let agent_metadata: Arc<Mutex<HashMap<String, (String, String)>>> =
-    //    Arc::new(Mutex::new(HashMap::new()));
+    let reqwest_client: reqwest::Client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
 
-    let http_client = Arc::new(
-        reqwest::ClientBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap(),
-    );
+    let http_client = Arc::new(reqwest_client);
 
     // Create VM manager and start VSOCK servers
     let vm_manager = Arc::new(VmManager::new());

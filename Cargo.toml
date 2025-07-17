@@ -20,7 +20,11 @@ serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 strum = { version = "0.27", default-features = false, features = ["derive"] }
 strum_macros = "0.27"
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "blocking",
+] }
 
 # Workspace-wide profile settings
 [profile.release]
