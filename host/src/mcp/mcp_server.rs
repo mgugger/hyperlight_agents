@@ -79,6 +79,7 @@ impl McpServerManager {
             server_info: Implementation {
                 name: "Hyperlight Agents MCP Server".to_string(),
                 version: "0.1.0".to_string(),
+                title: Some("Hyperlight MCP Server".to_string()),
             },
             capabilities: ServerCapabilities {
                 // Indicates that server supports MCP tools

@@ -40,9 +40,13 @@ impl ServerHandler for HyperlightAgentHandler {
                 let parameters = params_to_tool_input_schema(params.clone());
 
                 tools.push(Tool {
+                    title: Some(agent_id.clone()),
                     name: agent_id.clone(),
                     description: Some(format!("{} - {}", name, description)),
                     input_schema: parameters,
+                    output_schema: None,
+                    annotations: None,
+                    meta: None,
                 });
             }
         }
@@ -151,7 +155,9 @@ impl ServerHandler for HyperlightAgentHandler {
         }
 
         // Return the agent's response as text content
-        Ok(CallToolResult::text_content(response, None))
+        Ok(CallToolResult::text_content(vec![
+            rust_mcp_schema::TextContent::new(response, None, None),
+        ]))
     }
 }
 
