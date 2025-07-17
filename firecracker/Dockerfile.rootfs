@@ -8,7 +8,8 @@ RUN apk update && apk add --no-cache \
     openssl \
     curl \
     iproute2 \
-    coreutils
+    coreutils \
+    caddy
 
 # Copy the pre-built vm-agent binary
 COPY vm-agent /usr/bin/vm-agent

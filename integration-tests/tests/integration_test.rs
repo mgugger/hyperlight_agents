@@ -3,7 +3,7 @@ use log;
 use rust_mcp_sdk::mcp_client::{client_runtime, ClientHandler, ClientRuntime};
 use rust_mcp_sdk::schema::{
     CallToolRequestParams, ClientCapabilities, ContentBlock, Implementation,
-    InitializeRequestParams,
+    InitializeRequestParams, LATEST_PROTOCOL_VERSION,
 };
 use rust_mcp_sdk::{ClientSseTransport, ClientSseTransportOptions, McpClient};
 use serde_json::json;
@@ -18,9 +18,7 @@ use std::time::Duration;
 pub struct MyClientHandler;
 
 #[async_trait]
-impl ClientHandler for MyClientHandler {
-    // Implement required methods here if needed
-}
+impl ClientHandler for MyClientHandler {}
 
 /// Helper function to build the guest environment
 fn build_guest() -> io::Result<()> {
@@ -39,7 +37,7 @@ fn build_guest() -> io::Result<()> {
 }
 
 /// Helper function to start the host server
-fn start_host() -> io::Result<Child> {
+async fn start_host() -> io::Result<Child> {
     let root_dir = Path::new("../");
 
     // First, build the host executable to ensure it's up-to-date
@@ -58,6 +56,7 @@ fn start_host() -> io::Result<Child> {
     let host_executable = Path::new("./target/debug/hyperlight-agents-host");
     let mut command = Command::new(host_executable);
     command.current_dir(root_dir);
+    command.env("RUST_LOG", "debug,hyperlight_host=info");
 
     // Create a new process group for the child process to ensure that signals
     // are correctly propagated to the host and its subprocesses.
@@ -70,7 +69,7 @@ fn start_host() -> io::Result<Child> {
 
     log::info!("Starting host executable...");
     let child = command.spawn()?;
-    thread::sleep(Duration::from_secs(5)); // Allow host to initialize
+    tokio::time::sleep(Duration::from_secs(5)).await; // Allow host to initialize
     Ok(child)
 }
 
@@ -186,19 +185,19 @@ async fn integration_test() {
     build_guest().expect("Failed to build guest");
 
     // Step 2: Run the host
-    let mut host_guard = HostGuard::new(start_host().expect("Failed to start host"));
+    let mut host_guard = HostGuard::new(start_host().await.expect("Failed to start host"));
 
     // Allow the host some time to initialize
-    thread::sleep(Duration::from_secs(5));
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     let client_details = InitializeRequestParams {
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
-            title: None,
+            title: Some("integration-tests-client".into()),
             name: "integration-tests-client".into(),
             version: "0.1.0".into(),
         },
-        protocol_version: "2024-11-05".into(),
+        protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
     };
 
     let transport = ClientSseTransport::new(
@@ -241,7 +240,7 @@ async fn integration_test() {
     }
 
     // let vm agent startup fully
-    thread::sleep(Duration::from_secs(5));
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     // execute vm command
     let command = "free -m";
@@ -252,6 +251,17 @@ async fn integration_test() {
         command,
         res
     );
+
+    // execute vm command
+    let command = "df -h";
+    let res = execute_command(&client, command, "execute_vm_command").await;
+    assert!(
+        res.contains("/dev/root"),
+        "Expected \"/dev/root\" response for command \"{}\", got {:?}",
+        command,
+        res
+    );
+
     // test http call
     let command = "curl http://www.google.com/generate_204";
     let res = execute_command(&client, command, "execute_vm_command").await;
@@ -271,30 +281,26 @@ async fn integration_test() {
         res
     );
 
-    // install caddy
-    let command = "apk add --no-cache caddy";
-    let res = execute_command(&client, command, "execute_vm_command").await;
-    assert!(
-        res.contains("OK:"),
-        "Expected OK response for command \"{}\", got {:?}",
-        command,
-        res
-    );
-
-    // which caddy
     let command = "which caddy";
     let res = execute_command(&client, command, "execute_vm_command").await;
-    let caddy_bin = "/usr/sbin/caddy";
     assert!(
-        res.contains(caddy_bin),
-        "Expected {} response for command \"{}\", got {:?}",
-        caddy_bin,
+        res.contains("/usr/sbin/caddy"),
+        "Expected /usr/sbin/caddy for command \"{}\", got {:?}",
         command,
         res
     );
 
-    // create index.html
-    let command = "echo 'hello from caddy' > index.html";
+    // let command = "apk add --no-cache caddy";
+    // let res = execute_command(&client, command, "execute_vm_command").await;
+    // assert!(
+    //     res.contains("OK:"),
+    //     "Expected OK response for command \"{}\", got {:?}",
+    //     command,
+    //     res
+    // );
+
+    // // create index.html
+    let command = "echo 'Hello from Caddy' > index.html";
     let res = execute_command(&client, command, "execute_vm_command").await;
     assert!(
         res.trim().is_ascii(),
@@ -303,8 +309,8 @@ async fn integration_test() {
         res
     );
 
-    // // run caddy
-    let command = format!("{} file-server --listen :9999 --browse=false", caddy_bin);
+    // // // run caddy
+    let command = "caddy file-server --listen :9999 --browse=false";
     let res = execute_command(&client, &command, "spawn_command").await;
     assert!(
         res.contains("cmd_"),
@@ -313,22 +319,23 @@ async fn integration_test() {
         res
     );
 
-    // //thread::sleep(Duration::from_secs(5));
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
-    // // check caddy process is spawned
+    // // // check caddy process is spawned
     let command = "ps aux";
     let res = execute_command(&client, command, "execute_vm_command").await;
     assert!(
         res.trim().contains("caddy"),
-        "Expected non-empty response for spawned commands , got {:?}",
+        "Expected spawned command {}, got {:?}",
+        command,
         res
     );
 
-    // // run caddy
-    let command = "curl http://localhost:9999/index.html";
+    // check output
+    let command = "curl -s http://localhost:9999/";
     let res = execute_command(&client, command, "execute_vm_command").await;
     assert!(
-        res.contains("hello from caddy"),
+        res.contains("Hello from Caddy"),
         "Expected cmd_ response for command \"{}\", got {:?}",
         command,
         res

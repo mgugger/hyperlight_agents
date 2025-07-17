@@ -99,7 +99,7 @@ impl VmManager {
         working_dir: Option<String>,
         timeout_seconds: Option<u64>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        self.execute_command_with_retry(vm_id, command, args, working_dir, timeout_seconds, 3)
+        self.execute_command_with_retry(vm_id, command, args, working_dir, timeout_seconds, 30)
             .await
     }
 

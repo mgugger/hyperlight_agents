@@ -17,7 +17,7 @@ use log::{debug, error, info};
 #[tokio::main]
 async fn main() -> hyperlight_host::Result<()> {
     // Initialize unified host logger
-    host_logger::init_logger().expect("Failed to initialize host logger");
+    host_logger::init_logger();
 
     // Create the MCP server manager
     let mcp_server_manager = mcp_server::McpServerManager::new();
@@ -28,7 +28,7 @@ async fn main() -> hyperlight_host::Result<()> {
 
     let http_client = Arc::new(
         reqwest::ClientBuilder::new()
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()
             .unwrap(),
     );

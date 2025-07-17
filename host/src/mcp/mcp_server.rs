@@ -56,23 +56,33 @@ impl McpServerManager {
         // Register the agent's channel
         let mut channels = self.agent_channels.lock().unwrap();
         channels.insert(agent_id.clone(), tx);
+        log::debug!("Registered agent channel for '{}'", agent_id);
 
         // Register the agent's metadata in both local and global state
         let mut metadata = self.agent_metadata.lock().unwrap();
         metadata.insert(agent_id.clone(), (name.clone(), description.clone()));
+        log::debug!(
+            "Registered agent metadata for '{}': name='{}', description='{}'",
+            agent_id,
+            name,
+            description
+        );
 
         // Update global metadata
         if let Ok(mut global_metadata) = MCP_AGENT_METADATA.lock() {
-            global_metadata.insert(agent_id, (name, description, params));
+            global_metadata.insert(agent_id.clone(), (name, description, params));
+            log::debug!("Updated MCP_AGENT_METADATA for '{}'", agent_id);
         }
     }
 
     pub async fn start_server(self, addr: SocketAddr) {
         let agent_channels = self.agent_channels.clone();
 
+        log::debug!("Creating HyperlightAgentHandler with agent channels.");
         // Create a handler with agent channels
         let handler = HyperlightAgentHandler { agent_channels };
 
+        log::debug!("Preparing MCP server configuration.");
         // Create server configuration
         let server_details = InitializeResult {
             // Server name and version
@@ -97,14 +107,23 @@ impl McpServerManager {
             ..Default::default()
         };
 
+        log::debug!("Creating Hyper server instance.");
         // Start the HTTP server with Hyper
         let server = hyper_server::create_server(server_details, handler, hyper_server_options);
 
         log::debug!("MCP server listening on http://{}", addr);
+        log::debug!("MCP server about to start serving requests.");
 
-        if let Err(e) = server.start().await {
-            log::error!("Server error: {:?}", e);
+        let result = server.start().await;
+        match result {
+            Ok(_) => {
+                log::debug!("MCP server finished serving requests and exited normally.");
+            }
+            Err(e) => {
+                log::error!("MCP server error: {:?}", e);
+            }
         }
+        log::debug!("MCP server start_server() function is returning.");
     }
 }
 

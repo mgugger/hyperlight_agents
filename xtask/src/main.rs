@@ -8,6 +8,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
+use std::thread;
 use tar::Archive;
 use which::which;
 
@@ -480,7 +481,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
     // Create the ext4 filesystem
     log::info!("Creating ext4 filesystem...");
     let dd_cmd = Command::new("dd")
-        .args(["if=/dev/zero", "of=rootfs.ext4", "bs=1M", "count=512"])
+        .args(["if=/dev/zero", "of=rootfs.ext4", "bs=1M", "count=1024"])
         .current_dir(&paths.firecracker_dir)
         .output()?;
 
@@ -546,6 +547,7 @@ fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
         ));
     }
 
+    thread::sleep(std::time::Duration::from_millis(1000));
     // Unmount the filesystem
     log::info!("Unmounting filesystem...");
     let umount_cmd = Command::new("sudo")

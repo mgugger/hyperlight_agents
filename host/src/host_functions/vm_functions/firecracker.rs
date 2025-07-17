@@ -95,7 +95,7 @@ pub(crate) fn start_firecracker_vm(
         }],
         "machine-config": {
             "vcpu_count": 2,
-            "mem_size_mib": 512,
+            "mem_size_mib": 1024,
             "smt": false
         },
         "vsock": {
@@ -402,7 +402,7 @@ pub(crate) async fn list_spawned_processes_internal(
         command: "list_spawned_processes".to_string(),
         args: vec![],
         working_dir: None,
-        timeout_seconds: Some(10),
+        timeout_seconds: Some(30),
         mode: VmCommandMode::Foreground,
     };
 
@@ -410,7 +410,7 @@ pub(crate) async fn list_spawned_processes_internal(
         .send(vm_command)
         .map_err(|e| format!("Failed to send list_spawned_processes to VM: {}", e))?;
 
-    let timeout_duration = Duration::from_secs(10);
+    let timeout_duration = Duration::from_secs(30);
     let start_time = Instant::now();
 
     loop {
@@ -475,7 +475,7 @@ pub(crate) async fn stop_spawned_process_internal(
         command: "stop_spawned_process".to_string(),
         args: vec![process_id.to_string()],
         working_dir: None,
-        timeout_seconds: Some(10),
+        timeout_seconds: Some(30),
         mode: VmCommandMode::Foreground,
     };
 
@@ -483,7 +483,7 @@ pub(crate) async fn stop_spawned_process_internal(
         .send(vm_command)
         .map_err(|e| format!("Failed to send stop_spawned_process to VM: {}", e))?;
 
-    let timeout_duration = Duration::from_secs(10);
+    let timeout_duration = Duration::from_secs(30);
     let start_time = Instant::now();
 
     loop {
@@ -541,7 +541,7 @@ pub(crate) async fn check_vm_health_internal(manager: &VmManager, vm_id: &str) -
             command: "echo".to_string(),
             args: vec!["healthy".to_string()],
             working_dir: None,
-            timeout_seconds: Some(5),
+            timeout_seconds: Some(30),
             mode: VmCommandMode::Foreground,
         };
         return vm_instance.command_sender.send(health_cmd).is_ok();

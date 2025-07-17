@@ -26,4 +26,5 @@ export RUST_LOG=debug
 
 echo "Starting VM Agent on VSOCK port 1234..."
 echo "HTTP proxy configured at http://127.0.0.1:8080"
-exec /usr/bin/vm-agent
+echo -1000 > /proc/self/oom_score_adj
+exec nice -n -10 /usr/bin/vm-agent

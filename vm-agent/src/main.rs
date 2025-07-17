@@ -44,7 +44,7 @@ fn handle_connection(mut stream: vsock::VsockStream) -> Result<(), Box<dyn std::
 
     let mut buffer = [0; 4096];
     let mut total_message = String::new();
-    let read_timeout = std::time::Duration::from_secs(10);
+    let read_timeout = std::time::Duration::from_secs(30);
     let start_time = std::time::Instant::now();
     let mut read_attempts = 0;
     let mut response_sent = false;

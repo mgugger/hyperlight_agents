@@ -69,7 +69,12 @@ impl ServerHandler for HyperlightAgentHandler {
 
         let request_id = format!("req-{}", uuid::Uuid::new_v4());
 
-        log::debug!("{:?}", request);
+        log::debug!(
+            "Received CallToolRequest for tool '{}', request_id: {}",
+            tool_name,
+            request_id
+        );
+        log::debug!("CallToolRequest details: {:?}", request);
 
         // Log the incoming request
         //log_mcp_request(&tool_name, "message", &request_id);
@@ -78,8 +83,12 @@ impl ServerHandler for HyperlightAgentHandler {
         let agent_tx = {
             let channels = self.agent_channels.lock().unwrap();
             match channels.get(tool_name) {
-                Some(tx) => tx.clone(),
+                Some(tx) => {
+                    log::debug!("Found agent channel for '{}'", tool_name);
+                    tx.clone()
+                }
                 None => {
+                    log::debug!("Agent '{}' not found for CallToolRequest", tool_name);
                     return Err(CallToolError::new(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
                         format!("Agent '{}' not found", tool_name),
@@ -105,8 +114,15 @@ impl ServerHandler for HyperlightAgentHandler {
         // Wrap the message with MCP protocol info
         let mcp_message = format!("mcp_request:{}:{}", request_id, params_json);
 
+        log::debug!(
+            "Sending MCP message to agent '{}': {}",
+            tool_name,
+            mcp_message
+        );
+
         // Use .await to fix the Send future error
         if let Err(e) = agent_tx.clone().send((Some(mcp_message), function_name)) {
+            log::debug!("Failed to send message to agent '{}': {}", tool_name, e);
             return Err(CallToolError::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("Failed to send message to agent: {}", e),
@@ -119,10 +135,28 @@ impl ServerHandler for HyperlightAgentHandler {
             tool_name
         );
 
+        log::debug!(
+            "Waiting for response from agent '{}', request_id: {}",
+            tool_name,
+            request_id
+        );
+
         // Wait for response with timeout
         let response = match wait_for_response(resp_rx, 120).await {
-            Some(resp) => resp,
+            Some(resp) => {
+                log::debug!(
+                    "Received response from agent '{}', request_id: {}",
+                    tool_name,
+                    request_id
+                );
+                resp
+            }
             None => {
+                log::debug!(
+                    "Timeout or error waiting for response from agent '{}', request_id: {}",
+                    tool_name,
+                    request_id
+                );
                 return Err(CallToolError::new(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     "Timeout waiting for agent response",
@@ -138,6 +172,7 @@ impl ServerHandler for HyperlightAgentHandler {
             );
             let mut response_channels = MCP_RESPONSE_CHANNELS.lock().unwrap();
             response_channels.remove(&request_id);
+            log::debug!("Cleaned up response channel for request_id: {}", request_id);
 
             // Also make sure we remove any dangling request IDs for this request
             if let Ok(mut request_ids) = MCP_AGENT_REQUEST_IDS.lock() {
