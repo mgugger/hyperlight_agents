@@ -4,10 +4,12 @@
 extern crate alloc;
 extern crate hyperlight_guest;
 
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use hyperlight_agents_common::constants;
+use alloc::{format, vec};
+use hyperlight_agents_common::{
+    constants, Annotations, Role, Tool, ToolAnnotations, ToolInputSchema,
+};
 use hyperlight_common::flatbuffer_wrappers::function_call::FunctionCall;
 use hyperlight_common::flatbuffer_wrappers::function_types::{
     ParameterType, ParameterValue, ReturnType,
@@ -92,20 +94,19 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
     )
 }
 
-fn guest_get_name(_function_call: &FunctionCall) -> Result<Vec<u8>> {
-    Ok(get_flatbuffer_result("TopHNLinks"))
-}
+fn get_mcp_tool(_function_call: &FunctionCall) -> Result<Vec<u8>> {
+    let tool = Tool {
+        name: "Top HN Links".to_string(),
+        description: Some("Fetches the top links from Hacker News".to_string()),
+        annotations: None,
+        input_schema: ToolInputSchema::new(Vec::new(), None),
+        output_schema: None,
+        title: None,
+        meta: None,
+    };
+    let serialized = serde_json::to_string(&tool).unwrap();
 
-fn guest_get_description(_function_call: &FunctionCall) -> Result<Vec<u8>> {
-    Ok(get_flatbuffer_result(
-        "An Agent that returns the current Top Hacker News Links",
-    ))
-}
-
-fn guest_get_params(_function_call: &FunctionCall) -> Result<Vec<u8>> {
-    let params_json =
-        r#"[{"name": "url", "description": "URL to fetch", "type": "string", "required": false}]"#;
-    Ok(get_flatbuffer_result(params_json))
+    Ok(get_flatbuffer_result(serialized.as_str()))
 }
 
 #[no_mangle]
@@ -120,24 +121,10 @@ pub extern "C" fn hyperlight_main() {
 
     // Register metadata functions - these should not take parameters
     register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::GetName.as_ref().to_string(),
+        constants::GuestMethod::GetMCPTool.as_ref().to_string(),
         Vec::new(),
         ReturnType::String,
-        guest_get_name as usize,
-    ));
-
-    register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::GetDescription.as_ref().to_string(),
-        Vec::new(),
-        ReturnType::String,
-        guest_get_description as usize,
-    ));
-
-    register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::GetParams.as_ref().to_string(),
-        Vec::new(),
-        ReturnType::String,
-        guest_get_params as usize,
+        get_mcp_tool as usize,
     ));
 
     // Register callback function

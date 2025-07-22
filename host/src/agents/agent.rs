@@ -13,17 +13,13 @@ use opentelemetry::Context;
 use crate::host_functions::network_functions::http_request;
 use crate::host_functions::vm_functions::VmManager;
 use crate::mcp_server::{MCP_AGENT_REQUEST_IDS, MCP_RESPONSE_CHANNELS};
-use hyperlight_agents_common::constants;
+use hyperlight_agents_common::{constants, Tool};
 use reqwest::Client;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-use hyperlight_agents_common::traits::agent::Param;
-
 pub struct Agent {
     pub id: String,
-    pub name: String,
-    pub description: String,
-    pub params: Vec<Param>,
+    pub mcp_tool: Tool,
     pub sandbox: MultiUseSandbox,
     pub tx: Sender<(Option<String>, String)>,
     pub rx: Receiver<(Option<String>, String)>, // (response, callback_name)
@@ -63,116 +59,15 @@ pub fn create_agent(
     // Initialize the sandbox
     let mut sandbox = uninitialized_sandbox.evolve(Noop::default())?;
 
-    let name = sandbox
-        .call_guest_function_by_name::<String>(constants::GuestMethod::GetName.as_ref(), ())
+    let mcp_tool = sandbox
+        .call_guest_function_by_name::<String>(constants::GuestMethod::GetMCPTool.as_ref(), ())
         .unwrap();
 
-    let description = sandbox
-        .call_guest_function_by_name::<String>(constants::GuestMethod::GetDescription.as_ref(), ())
-        .unwrap();
-
-    let params_str = sandbox
-        .call_guest_function_by_name::<String>(constants::GuestMethod::GetParams.as_ref(), ())
-        .unwrap();
-
-    // Parse the JSON string to extract Param objects
-    let mut params: Vec<Param> = Vec::new();
-
-    // Remove the outer brackets and parse the JSON array
-    let json_str = params_str.trim_start_matches('[').trim_end_matches(']');
-
-    // Handle empty array case
-    if !json_str.trim().is_empty() {
-        // Split by commas that are not within objects
-        let mut depth = 0;
-        let mut start = 0;
-
-        for (i, c) in json_str.chars().enumerate() {
-            match c {
-                '{' => depth += 1,
-                '}' => depth -= 1,
-                ',' if depth == 0 => {
-                    if let Some(param_json) = json_str[start..i]
-                        .trim()
-                        .strip_prefix('{')
-                        .and_then(|s| s.strip_suffix('}'))
-                    {
-                        // Parse each parameter
-                        let name: String = param_json
-                            .split("\"name\": \"")
-                            .nth(1)
-                            .and_then(|s| s.split("\"").next())
-                            .unwrap_or_default()
-                            .to_string()
-                            .into();
-
-                        let description: String = param_json
-                            .split("\"description\": \"")
-                            .nth(1)
-                            .and_then(|s| s.split("\"").next())
-                            .unwrap_or_default()
-                            .to_string()
-                            .into();
-
-                        let required = param_json.contains("\"required\": true");
-
-                        // Default to String type since it's not included in the serialized format
-                        params.push(Param {
-                            name,
-                            description: Some(description),
-                            param_type: hyperlight_agents_common::traits::agent::ParamType::String,
-                            required,
-                        });
-                    }
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-
-        // Handle the last parameter
-        if start < json_str.len() {
-            if let Some(param_json) = json_str[start..]
-                .trim()
-                .strip_prefix('{')
-                .and_then(|s| s.strip_suffix('}'))
-            {
-                let name: String = param_json
-                    .split("\"name\": \"")
-                    .nth(1)
-                    .and_then(|s| s.split("\"").next())
-                    .unwrap_or_default()
-                    .to_string()
-                    .into();
-
-                let description: String = param_json
-                    .split("\"description\": \"")
-                    .nth(1)
-                    .and_then(|s| s.split("\"").next())
-                    .unwrap_or_default()
-                    .to_string()
-                    .into();
-
-                let required = param_json.contains("\"required\": true");
-
-                params.push(Param {
-                    name: name,
-                    description: Some(description),
-                    param_type: hyperlight_agents_common::traits::agent::ParamType::String,
-                    required,
-                });
-                // for param in &params {
-                //     log::info!("Added parameter: {:?}", param);
-                // }
-            }
-        }
-    }
+    let mcp_tool_deserialized: Tool = serde_json::from_str(&mcp_tool)?;
 
     Ok(Agent {
         id: agent_id.split("/").last().unwrap().to_string(),
-        name,
-        description,
-        params,
+        mcp_tool: mcp_tool_deserialized,
         sandbox,
         tx,
         rx,

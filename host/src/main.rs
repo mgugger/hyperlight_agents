@@ -26,6 +26,7 @@ async fn main() -> hyperlight_host::Result<()> {
     // Initialize unified host logger
     host_logger::init_logger();
 
+    /*
     let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .with_protocol(Protocol::Grpc)
@@ -48,6 +49,7 @@ async fn main() -> hyperlight_host::Result<()> {
 
     // Set it as the global provider
     global::set_tracer_provider(tracer_provider);
+    */
 
     // Create the MCP server manager
     let mcp_server_manager = mcp_server::McpServerManager::new();
@@ -110,7 +112,7 @@ async fn main() -> hyperlight_host::Result<()> {
             vm_manager.clone(),
         ) {
             Ok(agent) => {
-                debug!("✓ Agent created successfully: {}", agent.name);
+                debug!("✓ Agent created successfully: {}", agent.mcp_tool.name);
                 agents.push(agent);
             }
             Err(e) => {
@@ -127,9 +129,7 @@ async fn main() -> hyperlight_host::Result<()> {
         // Register the agent with the MCP server manager with metadata
         mcp_server_manager.register_agent(
             agent.id.clone(),
-            agent.name.clone(),
-            agent.description.clone(),
-            agent.params.clone(),
+            agent.mcp_tool.clone(),
             agent.tx.clone(),
         );
     }

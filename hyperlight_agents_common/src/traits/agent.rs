@@ -1,12 +1,12 @@
 use alloc::{string::String, vec::Vec};
 use hyperlight_common::flatbuffer_wrappers::function_call::FunctionCall;
 
+use crate::Tool;
+
 pub trait Agent {
     type Error;
 
-    fn get_name() -> Result<Vec<u8>, Self::Error>;
-    fn get_description() -> Result<Vec<u8>, Self::Error>;
-    fn get_params() -> Result<Vec<u8>, Self::Error>;
+    fn get_mcp_tool() -> Result<Tool, Self::Error>;
     fn process(function_call: &FunctionCall) -> Result<Vec<u8>, Self::Error>;
 }
 

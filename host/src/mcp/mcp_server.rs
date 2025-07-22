@@ -1,4 +1,4 @@
-use hyperlight_agents_common::traits::agent::Param;
+use hyperlight_agents_common::{traits::agent::Param, Tool};
 use rust_mcp_schema::{
     Implementation, InitializeResult, ServerCapabilities, ServerCapabilitiesTools,
     LATEST_PROTOCOL_VERSION,
@@ -19,7 +19,7 @@ use crate::mcp::mcp_handler::HyperlightAgentHandler;
 // Global response channels and agent metadata
 lazy_static::lazy_static! {
     pub static ref MCP_RESPONSE_CHANNELS: Mutex<HashMap<String, oneshot::Sender<String>>> = Mutex::new(HashMap::new());
-    pub static ref MCP_AGENT_METADATA: Mutex<HashMap<String, (String, String, Vec<Param>)>> = Mutex::new(HashMap::new());
+    pub static ref MCP_AGENT_METADATA: Mutex<HashMap<String, Tool>> = Mutex::new(HashMap::new());
     pub static ref MCP_AGENT_REQUEST_IDS: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
 }
 
@@ -48,9 +48,7 @@ impl McpServerManager {
     pub fn register_agent(
         &self,
         agent_id: String,
-        name: String,
-        description: String,
-        params: Vec<Param>,
+        mcp_tool: Tool,
         tx: Sender<(Option<String>, String)>,
     ) {
         // Register the agent's channel
@@ -60,17 +58,12 @@ impl McpServerManager {
 
         // Register the agent's metadata in both local and global state
         let mut metadata = self.agent_metadata.lock().unwrap();
-        metadata.insert(agent_id.clone(), (name.clone(), description.clone()));
-        log::debug!(
-            "Registered agent metadata for '{}': name='{}', description='{}'",
-            agent_id,
-            name,
-            description
-        );
+        metadata.insert(agent_id.clone(), ("".to_string(), "".to_string()));
+        log::debug!("Registered agent metadata for '{}'", agent_id,);
 
         // Update global metadata
         if let Ok(mut global_metadata) = MCP_AGENT_METADATA.lock() {
-            global_metadata.insert(agent_id.clone(), (name, description, params));
+            global_metadata.insert(agent_id.clone(), (mcp_tool));
             log::debug!("Updated MCP_AGENT_METADATA for '{}'", agent_id);
         }
     }

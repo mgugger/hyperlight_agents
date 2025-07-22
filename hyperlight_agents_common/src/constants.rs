@@ -15,8 +15,6 @@ pub enum HostMethod {
 
 #[derive(Debug, PartialEq, AsRefStr)]
 pub enum GuestMethod {
-    GetName,
-    GetDescription,
-    GetParams,
     Run,
+    GetMCPTool,
 }

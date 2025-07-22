@@ -46,18 +46,24 @@ impl ServerHandler for HyperlightAgentHandler {
 
             if let Ok(metadata) = MCP_AGENT_METADATA.lock() {
                 span.set_attribute(KeyValue::new("tools.count", metadata.len() as i64));
-                for (agent_id, (name, description, params)) in metadata.iter() {
+                for (agent_id, tool) in metadata.iter() {
                     span.add_event(format!("Processing tool {}", agent_id), vec![]);
-                    let parameters = params_to_tool_input_schema(params.clone());
+
+                    let input_properties: Option<HashMap<String, Map<String, Value>>> = tool
+                        .clone()
+                        .input_schema
+                        .properties
+                        .map(|btree| btree.into_iter().collect());
+                    let input_required = tool.input_schema.required.clone();
 
                     tools.push(Tool {
-                        title: Some(agent_id.clone()),
-                        name: agent_id.clone(),
-                        description: Some(format!("{} - {}", name, description)),
-                        input_schema: parameters,
+                        title: tool.title.clone(),
+                        name: tool.name.clone(),
+                        description: tool.description.clone(),
+                        input_schema: ToolInputSchema::new(input_required, input_properties),
                         output_schema: None,
                         annotations: None,
-                        meta: None,
+                        meta: tool.meta.clone(),
                     });
                 }
             }
@@ -211,43 +217,6 @@ impl ServerHandler for HyperlightAgentHandler {
             rust_mcp_schema::TextContent::new(response, None, None),
         ]))
     }
-}
-
-pub fn params_to_tool_input_schema(params: Vec<Param>) -> ToolInputSchema {
-    let mut required = Vec::new();
-    let mut properties: HashMap<String, Map<String, Value>> = HashMap::new();
-
-    for param in params {
-        let name_str = param.name.to_string();
-        if param.required {
-            required.push(name_str.clone());
-        }
-
-        let mut schema_entry = Map::new();
-
-        // Set the "type" field based on ParamType
-        schema_entry.insert(
-            "type".to_string(),
-            Value::String(
-                match param.param_type {
-                    ParamType::String => "string",
-                    ParamType::Integer => "integer",
-                    ParamType::Boolean => "boolean",
-                    ParamType::Float => "number",
-                }
-                .to_string(),
-            ),
-        );
-
-        // Add description if provided
-        if let Some(desc) = param.description {
-            schema_entry.insert("description".to_string(), Value::String(desc));
-        }
-
-        properties.insert(name_str, schema_entry);
-    }
-
-    ToolInputSchema::new(required, Some(properties))
 }
 
 async fn wait_for_response(rx: oneshot::Receiver<String>, timeout_seconds: u64) -> Option<String> {

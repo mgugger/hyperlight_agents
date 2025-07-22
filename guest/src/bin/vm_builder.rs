@@ -3,11 +3,12 @@
 
 extern crate alloc;
 
+use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use hyperlight_agents_common::constants;
+use hyperlight_agents_common::{constants, Tool, ToolInputSchema};
 use hyperlight_common::flatbuffer_wrappers::function_call::FunctionCall;
 use hyperlight_common::flatbuffer_wrappers::function_types::{
     ParameterType, ParameterValue, ReturnType,
@@ -18,6 +19,7 @@ use hyperlight_guest::error::{HyperlightGuestError, Result};
 use hyperlight_guest_bin::guest_function::definition::GuestFunctionDefinition;
 use hyperlight_guest_bin::guest_function::register::register_function;
 use hyperlight_guest_bin::host_comm::call_host_function;
+use serde_json::{Map, Value};
 use strum_macros::AsRefStr;
 
 #[derive(Debug, PartialEq, AsRefStr)]
@@ -47,7 +49,7 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
         if let Some(ParameterValue::String(json_params)) = parameters.get(0) {
             let action =
                 parse_json_param(json_params, "action").unwrap_or_else(|| "create_vm".to_string());
-            let vm_id =
+            let vmparams_id =
                 parse_json_param(json_params, "vm_id").unwrap_or_else(|| "default_vm".to_string());
             let command =
                 parse_json_param(json_params, "command").unwrap_or_else(|| "".to_string());
@@ -175,38 +177,43 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
     }
 }
 
-fn guest_get_name(_function_call: &FunctionCall) -> Result<Vec<u8>> {
-    Ok(get_flatbuffer_result("VmBuilder"))
-}
+fn get_mcp_tool(_function_call: &FunctionCall) -> Result<Vec<u8>> {
+    let mut params = BTreeMap::new();
 
-fn guest_get_description(_function_call: &FunctionCall) -> Result<Vec<u8>> {
-    Ok(get_flatbuffer_result(
-        "An Agent that can create VMs and execute build/test commands in them",
-    ))
-}
+    let mut action_schema = Map::new();
+    action_schema.insert("type".to_string(), Value::String("string".to_string()));
+    action_schema.insert("description".to_string(), Value::String("Action to perform, must be one of: create_vm, execute_vm_command, spawn_command, list_spawned_processes, stop_spawned_process, destroy_vm, list_vms".to_string()));
+    params.insert("action".to_string(), action_schema);
 
-fn guest_get_params(_function_call: &FunctionCall) -> Result<Vec<u8>> {
-    let params_json = r#"[
-        {
-            "name": "action",
-            "description": "Action to perform, must be one of: create_vm, execute_vm_command, spawn_command, list_spawned_processes, stop_spawned_process, destroy_vm, list_vms",
-            "type": "string",
-            "required": true
-        },
-        {
-            "name": "vm_id",
-            "description": "ID of the VM to operate on",
-            "type": "string",
-            "required": true
-        },
-        {
-            "name": "command",
-            "description": "Command to execute in the VM, arguments for spawn_command, or process_id for stop_spawned_process",
-            "type": "string",
-            "required": false
-        }
-    ]"#;
-    Ok(get_flatbuffer_result(params_json))
+    let mut vm_id_schema = Map::new();
+    vm_id_schema.insert("type".to_string(), Value::String("string".to_string()));
+    vm_id_schema.insert(
+        "description".to_string(),
+        Value::String("ID of the VM to operate on".to_string()),
+    );
+    params.insert("vm_id".to_string(), vm_id_schema);
+
+    let mut command_schema = Map::new();
+    command_schema.insert("type".to_string(), Value::String("string".to_string()));
+    command_schema.insert("description".to_string(), Value::String("Command to execute in the VM, arguments for spawn_command, or process_id for stop_spawned_process".to_string()));
+    params.insert("command".to_string(), command_schema);
+
+    let required = vec!["action".to_string(), "vm_id".to_string()];
+
+    let tool = Tool {
+        name: "VmBuilder".to_string(),
+        description: Some(
+            "An Agent that can create VMs and execute build/test commands in them".to_string(),
+        ),
+        annotations: None,
+        input_schema: ToolInputSchema::new(required, Some(params)),
+        output_schema: None,
+        title: None,
+        meta: None,
+    };
+    let serialized = serde_json::to_string(&tool).unwrap();
+
+    Ok(get_flatbuffer_result(serialized.as_str()))
 }
 
 fn send_message_to_host_method(
@@ -311,26 +318,11 @@ pub extern "C" fn hyperlight_main() {
         guest_run as usize,
     ));
 
-    // Register metadata functions - these should not take parameters
     register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::GetName.as_ref().to_string(),
+        constants::GuestMethod::GetMCPTool.as_ref().to_string(),
         Vec::new(),
         ReturnType::String,
-        guest_get_name as usize,
-    ));
-
-    register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::GetDescription.as_ref().to_string(),
-        Vec::new(),
-        ReturnType::String,
-        guest_get_description as usize,
-    ));
-
-    register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::GetParams.as_ref().to_string(),
-        Vec::new(),
-        ReturnType::String,
-        guest_get_params as usize,
+        get_mcp_tool as usize,
     ));
 
     // Register callback functions
