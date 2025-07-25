@@ -159,7 +159,7 @@ async fn execute_command(client: &Arc<ClientRuntime>, command: &str, action: &st
         .unwrap()
         .clone();
     let request = CallToolRequestParams {
-        name: "vm_builder".to_string(),
+        name: "VmBuilder".to_string(),
         arguments: Some(params),
     };
     let result = client.call_tool(request).await;
@@ -226,7 +226,7 @@ async fn integration_test() {
         .unwrap()
         .clone();
     let request = CallToolRequestParams {
-        name: "vm_builder".to_string(),
+        name: "VmBuilder".to_string(),
         arguments: Some(params),
     };
     let result = client.call_tool(request).await;
@@ -347,7 +347,7 @@ async fn integration_test() {
         .unwrap()
         .clone();
     let request = CallToolRequestParams {
-        name: "vm_builder".to_string(),
+        name: "VmBuilder".to_string(),
         arguments: Some(params),
     };
     let result = client.call_tool(request).await;

@@ -6,9 +6,9 @@ use hyperlight_host::sandbox::SandboxConfiguration;
 use hyperlight_host::sandbox_state::sandbox::EvolvableSandbox;
 use hyperlight_host::sandbox_state::transition::Noop;
 use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
-use opentelemetry::global::{self};
-use opentelemetry::trace::{Span, TraceContextExt, Tracer};
-use opentelemetry::Context;
+//use opentelemetry::global::{self};
+//use opentelemetry::trace::{Span, TraceContextExt, Tracer};
+//use opentelemetry::Context;
 
 use crate::host_functions::network_functions::http_request;
 use crate::host_functions::vm_functions::VmManager;
@@ -19,6 +19,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub struct Agent {
     pub id: String,
+    pub name: String,
     pub mcp_tool: Tool,
     pub sandbox: MultiUseSandbox,
     pub tx: Sender<(Option<String>, String)>,
@@ -67,6 +68,7 @@ pub fn create_agent(
 
     Ok(Agent {
         id: agent_id.split("/").last().unwrap().to_string(),
+        name: mcp_tool_deserialized.name.clone(),
         mcp_tool: mcp_tool_deserialized,
         sandbox,
         tx,
@@ -95,19 +97,19 @@ pub fn register_host_functions(
             let client = http_client_clone.clone();
             let sender = tx_clone.clone();
 
-            let tracer = global::tracer("host_method");
-            let span = tracer.start("HostMethod::FetchData");
-            let cx = Context::current_with_span(span);
+            // let tracer = global::tracer("host_method");
+            // let span = tracer.start("HostMethod::FetchData");
+            // let cx = Context::current_with_span(span);
 
             std::thread::spawn(move || {
-                let tracer = global::tracer("host_method");
-                let mut child_span = tracer.start_with_context("http_request", &cx);
+                //let tracer = global::tracer("host_method");
+                //let mut child_span = tracer.start_with_context("http_request", &cx);
 
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let response = rt.block_on(async {
                     match http_request(client, &url, "GET", None, None).await {
                         Ok(resp) => {
-                            child_span.add_event(format!("Http Request {}", &url), vec![]);
+                            //child_span.add_event(format!("Http Request {}", &url), vec![]);
                             resp
                         }
                         Err(e) => format!("HTTP request failed: {}", e),
@@ -118,7 +120,7 @@ pub fn register_host_functions(
                     log::error!("Failed to send response: {:?}", e);
                 }
 
-                child_span.end();
+                //child_span.end();
             });
 
             Ok("Http Request sent".to_string())

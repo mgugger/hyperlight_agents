@@ -77,7 +77,7 @@ impl Paths {
             vm_images_dir: vm_images_dir.clone(),
             firecracker_dir: firecracker_dir.clone(),
             kernel_path: vm_images_dir.join(format!("vmlinux-{}", KERNEL_VERSION)),
-            rootfs_path: vm_images_dir.join("rootfs.ext4"),
+            rootfs_path: vm_images_dir.join("rootfs.squashfs"),
             firecracker_binary: firecracker_dir.join("firecracker"),
         })
     }
@@ -110,9 +110,10 @@ async fn run_all(paths: &Paths) -> Result<()> {
 
     log::info!("\n{}", "1. Building guest package...".bright_cyan());
     build_guest(paths)?;
+    build_vm_agent(paths)?;
 
     log::info!("\n{}", "2. Building rootfs with vm-agent...".bright_cyan());
-    add_agent_to_rootfs(paths)?;
+    build_base_rootfs(paths)?;
 
     log::info!("\n{}", "3. Checking kernel binary...".bright_cyan());
     let final_kernel_path = paths.vm_images_dir.join("vmlinux");
@@ -151,8 +152,8 @@ fn check_dependencies() -> Result<()> {
     if which("dd").is_err() {
         missing.push("dd (coreutils)");
     }
-    if which("mkfs.ext4").is_err() {
-        missing.push("mkfs.ext4 (e2fsprogs)");
+    if which("mksquashfs").is_err() {
+        missing.push("mksquashfs");
     }
     if which("sudo").is_err() {
         missing.push("sudo");
@@ -250,20 +251,43 @@ fn build_vm_agent(paths: &Paths) -> Result<()> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-
     log::info!("{} vm-agent built successfully", "✓".bright_green());
+
+    let built_bin = paths
+        .project_root
+        .join("vm-agent")
+        .join("target")
+        .join("x86_64-unknown-linux-musl")
+        .join("release")
+        .join("vm-agent");
+    let dest_bin = paths.vm_images_dir.join("vm-agent");
+    fs::copy(&built_bin, &dest_bin).map_err(|e| {
+        anyhow!(
+            "Failed to copy vm-agent binary: {} from {:?} to {:?}",
+            e,
+            built_bin,
+            dest_bin
+        )
+    })?;
+    log::info!(
+        "{} vm-agent binary copied to {}",
+        "✓".bright_green(),
+        dest_bin.display()
+    );
+
     Ok(())
 }
 
 fn build_base_rootfs(paths: &Paths) -> Result<()> {
     log::info!(
-        "{} Building base rootfs image from Dockerfile...",
+        "{} Building base squashfs rootfs image from Dockerfile...",
         "🐳".bright_blue()
     );
 
-    if paths.rootfs_path.exists() {
+    let squashfs_path = paths.vm_images_dir.join("rootfs.squashfs");
+    if squashfs_path.exists() {
         log::info!(
-            "{} Base rootfs image already exists. Skipping.",
+            "{} Base squashfs rootfs image already exists. Skipping.",
             "✓".bright_green()
         );
         return Ok(());
@@ -311,267 +335,61 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
         ));
     }
 
-    // 3. Create and format the rootfs.ext4 file (increased size for git, rust, etc.)
-    let rootfs_size_mb = 2000;
-    log::info!("Creating empty {}MB file for rootfs...", rootfs_size_mb);
-    let dd_output = Command::new("dd")
-        .args([
-            "if=/dev/zero",
-            &format!("of={}", paths.rootfs_path.display()),
-            "bs=1M",
-            &format!("count={}", rootfs_size_mb),
-        ])
-        .output()?;
-    if !dd_output.status.success() {
-        let _ = Command::new("podman").args(["rm", container_name]).output();
-        return Err(anyhow!(
-            "dd command failed:\n{}",
-            String::from_utf8_lossy(&dd_output.stderr)
-        ));
+    // 3. Export the container filesystem to a temporary directory
+    let export_dir = paths.vm_images_dir.join("squashfs_export");
+    if export_dir.exists() {
+        fs::remove_dir_all(&export_dir)?;
     }
+    fs::create_dir_all(&export_dir)?;
 
-    log::info!("Formatting file as ext4...");
-    let mkfs_output = Command::new("mkfs.ext4")
-        .args(["-F", paths.rootfs_path.to_str().unwrap()])
-        .output()?;
-    if !mkfs_output.status.success() {
-        let _ = Command::new("podman").args(["rm", container_name]).output();
-        return Err(anyhow!(
-            "mkfs.ext4 command failed:\n{}",
-            String::from_utf8_lossy(&mkfs_output.stderr)
-        ));
-    }
-
-    // 4. Mount the rootfs and extract the container filesystem into it
-    let temp_dir = tempfile::tempdir()?;
-    let mount_point = temp_dir.path().join("mnt");
-    fs::create_dir_all(&mount_point)?;
-
-    log::info!("Mounting rootfs image (requires sudo)...");
-    let mount_cmd = Command::new("sudo")
-        .args([
-            "mount",
-            "-o",
-            "loop",
-            paths.rootfs_path.to_str().unwrap(),
-            mount_point.to_str().unwrap(),
-        ])
-        .output()?;
-    if !mount_cmd.status.success() {
-        let _ = Command::new("podman").args(["rm", container_name]).output();
-        return Err(anyhow!(
-            "Failed to mount base rootfs:\n{}",
-            String::from_utf8_lossy(&mount_cmd.stderr)
-        ));
-    }
-
-    log::info!("Exporting Podman filesystem and extracting to rootfs (requires sudo)...");
+    log::info!("Exporting Podman container filesystem...");
     let export_output = Command::new("podman")
         .args(["export", container_name])
         .stdout(std::process::Stdio::piped())
         .spawn()?;
 
-    let tar_extract = Command::new("sudo")
-        .args(["tar", "-x", "-C", mount_point.to_str().unwrap()])
+    let tar_extract = Command::new("tar")
+        .args(["-x", "-C", export_dir.to_str().unwrap()])
         .stdin(export_output.stdout.unwrap())
         .output()?;
 
     if !tar_extract.status.success() {
-        let _ = Command::new("sudo")
-            .args(["umount", mount_point.to_str().unwrap()])
-            .output();
         let _ = Command::new("podman").args(["rm", container_name]).output();
+        fs::remove_dir_all(&export_dir).ok();
         return Err(anyhow!(
-            "Failed to extract Podman filesystem to rootfs:\n{}",
+            "Failed to extract Podman filesystem for squashfs:\n{}",
             String::from_utf8_lossy(&tar_extract.stderr)
         ));
     }
 
-    // 5. Unmount and cleanup
-    log::info!("Unmounting rootfs image (requires sudo)...");
-    let umount_cmd = Command::new("sudo")
-        .args(["umount", mount_point.to_str().unwrap()])
+    // 4. Build squashfs image from exported directory
+    log::info!("Creating squashfs image (requires mksquashfs)...");
+    let mksquashfs_output = Command::new("mksquashfs")
+        .args([
+            export_dir.to_str().unwrap(),
+            squashfs_path.to_str().unwrap(),
+            "-noappend",
+            "-comp",
+            "xz",
+        ])
         .output()?;
-    if !umount_cmd.status.success() {
+    if !mksquashfs_output.status.success() {
         let _ = Command::new("podman").args(["rm", container_name]).output();
+        fs::remove_dir_all(&export_dir).ok();
         return Err(anyhow!(
-            "Failed to unmount base rootfs:\n{}",
-            String::from_utf8_lossy(&umount_cmd.stderr)
+            "mksquashfs command failed:\n{}",
+            String::from_utf8_lossy(&mksquashfs_output.stderr)
         ));
     }
 
-    // Clean up the container
+    // 5. Cleanup
+    fs::remove_dir_all(&export_dir).ok();
     let _ = Command::new("podman").args(["rm", container_name]).output();
 
     log::info!(
-        "{} Base rootfs image with development tools created successfully.",
-        "✓".bright_green()
-    );
-    Ok(())
-}
-
-fn add_agent_to_rootfs(paths: &Paths) -> Result<()> {
-    log::info!("{} Building rootfs with vm-agent...", "📦".bright_blue());
-
-    // Ensure vm-agent is built
-    build_vm_agent(paths)?;
-
-    let vm_agent_src = paths
-        .project_root
-        .join("vm-agent/target/x86_64-unknown-linux-musl/release/vm-agent");
-    if !vm_agent_src.exists() {
-        return Err(anyhow!(
-            "vm-agent binary not found. Please run `build-vm-agent` first."
-        ));
-    }
-
-    // Copy vm-agent to firecracker directory for Docker build
-    let vm_agent_dest = paths.firecracker_dir.join("vm-agent");
-    log::info!("Copying vm-agent binary to firecracker directory...");
-    fs::copy(&vm_agent_src, &vm_agent_dest)?;
-
-    // Build the Docker image with the vm-agent
-    log::info!("Building Docker image with vm-agent...");
-    let docker_build = Command::new("docker")
-        .args([
-            "build",
-            "-f",
-            "Dockerfile.rootfs",
-            "-t",
-            "hyperlight-rootfs",
-            ".",
-        ])
-        .current_dir(&paths.firecracker_dir)
-        .output()?;
-
-    if !docker_build.status.success() {
-        return Err(anyhow!(
-            "Docker build failed:\n{}",
-            String::from_utf8_lossy(&docker_build.stderr)
-        ));
-    }
-
-    // Create a container and export it as a tar
-    log::info!("Creating container from image...");
-    let create_container = Command::new("docker")
-        .args([
-            "create",
-            "--name",
-            "hyperlight-rootfs-temp",
-            "hyperlight-rootfs",
-        ])
-        .current_dir(&paths.firecracker_dir)
-        .output()?;
-
-    if !create_container.status.success() {
-        return Err(anyhow!(
-            "Failed to create container:\n{}",
-            String::from_utf8_lossy(&create_container.stderr)
-        ));
-    }
-
-    // Export the container filesystem to a tar file
-    log::info!("Exporting container filesystem...");
-    let export_container = Command::new("docker")
-        .args(["export", "hyperlight-rootfs-temp"])
-        .current_dir(&paths.firecracker_dir)
-        .stdout(std::process::Stdio::piped())
-        .spawn()?;
-
-    // Create the ext4 filesystem
-    log::info!("Creating ext4 filesystem...");
-    let dd_cmd = Command::new("dd")
-        .args(["if=/dev/zero", "of=rootfs.ext4", "bs=1M", "count=1024"])
-        .current_dir(&paths.firecracker_dir)
-        .output()?;
-
-    if !dd_cmd.status.success() {
-        return Err(anyhow!(
-            "Failed to create ext4 file:\n{}",
-            String::from_utf8_lossy(&dd_cmd.stderr)
-        ));
-    }
-
-    // Format as ext4
-    let mkfs_cmd = Command::new("mkfs.ext4")
-        .args(["-F", "rootfs.ext4"])
-        .current_dir(&paths.firecracker_dir)
-        .output()?;
-
-    if !mkfs_cmd.status.success() {
-        return Err(anyhow!(
-            "Failed to format ext4:\n{}",
-            String::from_utf8_lossy(&mkfs_cmd.stderr)
-        ));
-    }
-
-    // Mount the ext4 filesystem
-    let temp_dir = tempfile::tempdir()?;
-    let mount_point = temp_dir.path().join("mnt");
-    fs::create_dir_all(&mount_point)?;
-
-    log::info!("Mounting ext4 filesystem (requires sudo)...");
-    let mount_cmd = Command::new("sudo")
-        .args([
-            "mount",
-            "-o",
-            "loop",
-            "rootfs.ext4",
-            mount_point.to_str().unwrap(),
-        ])
-        .current_dir(&paths.firecracker_dir)
-        .output()?;
-
-    if !mount_cmd.status.success() {
-        return Err(anyhow!(
-            "Failed to mount rootfs:\n{}",
-            String::from_utf8_lossy(&mount_cmd.stderr)
-        ));
-    }
-
-    // Extract the container tar into the mounted filesystem
-    log::info!("Extracting container contents (requires sudo)...");
-    let mut export_child = export_container;
-    let extract_cmd = Command::new("sudo")
-        .args(["tar", "-xf", "-", "-C", mount_point.to_str().unwrap()])
-        .stdin(export_child.stdout.take().unwrap())
-        .output()?;
-
-    if !extract_cmd.status.success() {
-        let _ = Command::new("sudo")
-            .args(["umount", mount_point.to_str().unwrap()])
-            .output();
-        return Err(anyhow!(
-            "Failed to extract container contents:\n{}",
-            String::from_utf8_lossy(&extract_cmd.stderr)
-        ));
-    }
-
-    thread::sleep(std::time::Duration::from_millis(1000));
-    // Unmount the filesystem
-    log::info!("Unmounting filesystem...");
-    let umount_cmd = Command::new("sudo")
-        .args(["umount", mount_point.to_str().unwrap()])
-        .output()?;
-
-    if !umount_cmd.status.success() {
-        return Err(anyhow!(
-            "Failed to unmount rootfs:\n{}",
-            String::from_utf8_lossy(&umount_cmd.stderr)
-        ));
-    }
-
-    // Clean up the temporary container
-    let _ = Command::new("docker")
-        .args(["rm", "hyperlight-rootfs-temp"])
-        .output();
-
-    // Clean up the temporary vm-agent file
-    let _ = fs::remove_file(&vm_agent_dest);
-
-    log::info!(
-        "{} Rootfs with vm-agent successfully created.",
-        "✓".bright_green()
+        "{} Base squashfs rootfs image created successfully at {}.",
+        "✓".bright_green(),
+        squashfs_path.display()
     );
     Ok(())
 }

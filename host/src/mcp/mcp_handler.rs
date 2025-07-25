@@ -3,11 +3,11 @@ use hyperlight_agents_common::{
     constants,
     traits::agent::{Param, ParamType},
 };
-use opentelemetry::{
-    global::{self},
-    trace::{Span, TraceContextExt, Tracer},
-    KeyValue,
-};
+//use opentelemetry::{
+//    global::{self},
+//    trace::{Span, TraceContextExt, Tracer},
+//    KeyValue,
+//};
 use rust_mcp_schema::{
     schema_utils::CallToolError, CallToolRequest, CallToolResult, ListToolsRequest,
     ListToolsResult, RpcError, Tool, ToolInputSchema,
@@ -38,42 +38,42 @@ impl ServerHandler for HyperlightAgentHandler {
         _request: ListToolsRequest,
         _runtime: &dyn McpServer,
     ) -> Result<ListToolsResult, RpcError> {
-        let tracer = global::tracer("mcp_handler");
+        //let tracer = global::tracer("mcp_handler");
 
-        tracer.in_span("handle_list_tools_request", |cx| {
-            let span = cx.span();
-            let mut tools = Vec::new();
+        //tracer.in_span("handle_list_tools_request", |cx| {
+        //let span = cx.span();
+        let mut tools = Vec::new();
 
-            if let Ok(metadata) = MCP_AGENT_METADATA.lock() {
-                span.set_attribute(KeyValue::new("tools.count", metadata.len() as i64));
-                for (agent_id, tool) in metadata.iter() {
-                    span.add_event(format!("Processing tool {}", agent_id), vec![]);
+        if let Ok(metadata) = MCP_AGENT_METADATA.lock() {
+            //span.set_attribute(KeyValue::new("tools.count", metadata.len() as i64));
+            for (agent_id, tool) in metadata.iter() {
+                //span.add_event(format!("Processing tool {}", agent_id), vec![]);
 
-                    let input_properties: Option<HashMap<String, Map<String, Value>>> = tool
-                        .clone()
-                        .input_schema
-                        .properties
-                        .map(|btree| btree.into_iter().collect());
-                    let input_required = tool.input_schema.required.clone();
+                let input_properties: Option<HashMap<String, Map<String, Value>>> = tool
+                    .clone()
+                    .input_schema
+                    .properties
+                    .map(|btree| btree.into_iter().collect());
+                let input_required = tool.input_schema.required.clone();
 
-                    tools.push(Tool {
-                        title: tool.title.clone(),
-                        name: tool.name.clone(),
-                        description: tool.description.clone(),
-                        input_schema: ToolInputSchema::new(input_required, input_properties),
-                        output_schema: None,
-                        annotations: None,
-                        meta: tool.meta.clone(),
-                    });
-                }
+                tools.push(Tool {
+                    title: tool.title.clone(),
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    input_schema: ToolInputSchema::new(input_required, input_properties),
+                    output_schema: None,
+                    annotations: None,
+                    meta: tool.meta.clone(),
+                });
             }
+        }
 
-            Ok(ListToolsResult {
-                tools,
-                meta: None,
-                next_cursor: None,
-            })
+        Ok(ListToolsResult {
+            tools,
+            meta: None,
+            next_cursor: None,
         })
+        //})
     }
 
     // Handle CallToolRequest, communicate with the agent and return the result
@@ -84,10 +84,10 @@ impl ServerHandler for HyperlightAgentHandler {
     ) -> Result<CallToolResult, CallToolError> {
         let tool_name = request.tool_name();
 
-        let tracer = global::tracer("mcp_handler");
+        //let tracer = global::tracer("mcp_handler");
 
-        let mut span = tracer.start("handle_call_tool_request");
-        span.add_event(format!("Tool Name {}", tool_name), vec![]);
+        //let mut span = tracer.start("handle_call_tool_request");
+        //span.add_event(format!("Tool Name {}", tool_name), vec![]);
 
         let request_id = format!("req-{}", uuid::Uuid::new_v4());
 
@@ -104,6 +104,7 @@ impl ServerHandler for HyperlightAgentHandler {
         // Get the agent's channel
         let agent_tx = {
             let channels = self.agent_channels.lock().unwrap();
+            log::debug!("Agents available: '{:?}'", channels.keys());
             match channels.get(tool_name) {
                 Some(tx) => {
                     log::debug!("Found agent channel for '{}'", tool_name);
@@ -211,7 +212,7 @@ impl ServerHandler for HyperlightAgentHandler {
             }
         }
 
-        span.end();
+        //span.end();
         // Return the agent's response as text content
         Ok(CallToolResult::text_content(vec![
             rust_mcp_schema::TextContent::new(response, None, None),

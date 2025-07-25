@@ -2,10 +2,25 @@
 # Simple init script for hyperlight VM
 echo "Starting Hyperlight VM Agent..."
 
+# Mount tmpfs for overlay upper/work
+mount -t tmpfs tmpfs /mnt/tmpfs
+mkdir -p /mnt/tmpfs/upper /mnt/tmpfs/work /mnt/tmpfs/overlay
+mount -t overlay overlay \
+  -o lowerdir=/,upperdir=/mnt/tmpfs/upper,workdir=/mnt/tmpfs/work \
+  /mnt/tmpfs/overlay
+
+# Switch root to overlay
+mkdir /mnt/tmpfs/overlay/old_root
+cd /mnt/tmpfs/overlay
+pivot_root . old_root
+
+# (Optional) Mount essential filesystems again if needed
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+
 # Mount essential filesystems
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-#mount -t devtmpfs devtmpfs /dev
 
 # Configure loopback interface
 ip link set lo up

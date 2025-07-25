@@ -15,10 +15,10 @@ mod mcp;
 
 use log::{debug, error, info};
 
-use opentelemetry::global::{self};
-use opentelemetry::KeyValue;
-use opentelemetry_otlp::{Protocol, WithExportConfig};
-use opentelemetry_sdk::Resource;
+//use opentelemetry::global::{self};
+//use opentelemetry::KeyValue;
+//use opentelemetry_otlp::{Protocol, WithExportConfig};
+//use opentelemetry_sdk::Resource;
 use reqwest::Client;
 
 #[tokio::main]
@@ -128,7 +128,7 @@ async fn main() -> hyperlight_host::Result<()> {
         tx_senders.push((agent.id.clone(), agent.tx.clone()));
         // Register the agent with the MCP server manager with metadata
         mcp_server_manager.register_agent(
-            agent.id.clone(),
+            agent.name.clone(),
             agent.mcp_tool.clone(),
             agent.tx.clone(),
         );

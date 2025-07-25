@@ -29,8 +29,7 @@ pub(crate) async fn create_vm_internal(
     let temp_dir = TempDir::new()?;
     let (command_sender, command_receiver) = mpsc::channel::<VmCommand>();
 
-    let (vm_process, memfd_rootfs, rootfs_symlink) =
-        start_firecracker_vm(temp_dir.path(), &vm_id, cid)?;
+    let (vm_process, rootfs_path) = start_firecracker_vm(temp_dir.path(), &vm_id, cid)?;
 
     let vm_instance = VmInstance {
         vm_id: vm_id.clone(),
@@ -39,8 +38,8 @@ pub(crate) async fn create_vm_internal(
         temp_dir,
         command_sender,
         result_receiver: Arc::new(Mutex::new(HashMap::new())),
-        memfd_rootfs,
-        rootfs_symlink,
+        memfd_rootfs: None,
+        rootfs_symlink: rootfs_path,
     };
 
     {
@@ -62,11 +61,10 @@ pub(crate) fn start_firecracker_vm(
     vm_dir: &Path,
     vm_id: &str,
     cid: u32,
-) -> Result<(Option<u32>, Option<Memfd>, Option<PathBuf>), Box<dyn std::error::Error + Send + Sync>>
-{
+) -> Result<(Option<u32>, Option<PathBuf>), Box<dyn std::error::Error + Send + Sync>> {
     let vm_images_dir = Path::new("firecracker");
     let kernel_path = vm_images_dir.join("vmlinux");
-    let source_rootfs_path = vm_images_dir.join("rootfs.ext4");
+    let source_rootfs_path = vm_images_dir.join("rootfs.squashfs");
     let config_path = vm_dir.join("firecracker-config.json");
 
     if !kernel_path.exists() {
@@ -80,22 +78,20 @@ pub(crate) fn start_firecracker_vm(
         .into());
     }
 
-    let (memfd_rootfs, rootfs_path) = create_memfd_rootfs(&source_rootfs_path, vm_id)?;
-
     let config = serde_json::json!({
         "boot-source": {
             "kernel_image_path": kernel_path.to_str().unwrap(),
-            "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init root=/dev/vda rw"
+            "boot_args": "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init root=/dev/vda rootfstype=squashfs ro"
         },
         "drives": [{
             "drive_id": "rootfs",
-            "path_on_host": rootfs_path.to_str().unwrap(),
+            "path_on_host": source_rootfs_path.to_str().unwrap(),
             "is_root_device": true,
-            "is_read_only": false
+            "is_read_only": true
         }],
         "machine-config": {
-            "vcpu_count": 2,
-            "mem_size_mib": 1024,
+            "vcpu_count": 1,
+            "mem_size_mib": 512,
             "smt": false
         },
         "vsock": {
@@ -119,7 +115,7 @@ pub(crate) fn start_firecracker_vm(
     match cmd.spawn() {
         Ok(child) => {
             thread::sleep(Duration::from_secs(2));
-            Ok((Some(child.id()), Some(memfd_rootfs), Some(rootfs_path)))
+            Ok((Some(child.id()), Some(source_rootfs_path)))
         }
         Err(e) => {
             log::error!("Failed to start Firecracker VM: {}", e);
@@ -128,28 +124,7 @@ pub(crate) fn start_firecracker_vm(
     }
 }
 
-fn create_memfd_rootfs(
-    source_rootfs: &Path,
-    vm_id: &str,
-) -> Result<(Memfd, PathBuf), Box<dyn std::error::Error + Send + Sync>> {
-    let memfd = MemfdOptions::default()
-        .close_on_exec(false)
-        .create(&format!("hyperlight_rootfs_{}", vm_id))?;
-
-    let mut source_file = File::open(source_rootfs)?;
-    let mut memfd_file = memfd.as_file();
-    std::io::copy(&mut source_file, &mut memfd_file)?;
-
-    let proc_path = format!("/proc/self/fd/{}", memfd.as_raw_fd());
-    let symlink_path = PathBuf::from(format!("/tmp/hyperlight_rootfs_{}.ext4", vm_id));
-
-    if symlink_path.exists() {
-        std::fs::remove_file(&symlink_path)?;
-    }
-    std::os::unix::fs::symlink(&proc_path, &symlink_path)?;
-
-    Ok((memfd, symlink_path))
-}
+// Removed: create_memfd_rootfs, not needed for squashfs readonly rootfs.
 
 fn start_command_processor(
     instances: Arc<Mutex<HashMap<String, VmInstance>>>,

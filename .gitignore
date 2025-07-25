@@ -1,11 +1,11 @@
-/firecracker/rootfs.ext4
-/firecracker/rootfs.ext4.backup
+/firecracker/rootfs.squashfs
+/firecracker/rootfs.squashfs.backup
 /firecracker/vmlinux*
 /firecracker/firecracker
 # Exclude build artifacts and target directories
 **/target/
 target/
-
+vm-agent
 # VSCode related files
 .vscode/
 

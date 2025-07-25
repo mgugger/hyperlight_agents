@@ -6,7 +6,7 @@
   "drives": [
     {
       "drive_id": "rootfs",
-      "path_on_host": "rootfs.ext4",
+      "path_on_host": "rootfs.squashfs",
       "is_root_device": true,
       "is_read_only": false
     }

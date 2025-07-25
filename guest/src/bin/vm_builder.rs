@@ -49,7 +49,7 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
         if let Some(ParameterValue::String(json_params)) = parameters.get(0) {
             let action =
                 parse_json_param(json_params, "action").unwrap_or_else(|| "create_vm".to_string());
-            let vmparams_id =
+            let vm_id =
                 parse_json_param(json_params, "vm_id").unwrap_or_else(|| "default_vm".to_string());
             let command =
                 parse_json_param(json_params, "command").unwrap_or_else(|| "".to_string());
