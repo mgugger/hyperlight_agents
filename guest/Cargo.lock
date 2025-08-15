@@ -82,10 +82,22 @@ name = "hyperlight-agents-guest"
 version = "0.1.0"
 dependencies = [
  "hyperlight-agents-common",
+ "hyperlight-agents-guest-common",
+ "regex",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+]
+
+[[package]]
+name = "hyperlight-agents-guest-common"
+version = "0.1.0"
+dependencies = [
+ "hyperlight-agents-common",
  "hyperlight-common",
  "hyperlight-guest",
  "hyperlight-guest-bin",
- "regex",
  "serde",
  "serde_json",
  "strum",

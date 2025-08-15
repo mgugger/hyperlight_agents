@@ -2,51 +2,14 @@
 #![no_main]
 
 extern crate alloc;
-extern crate hyperlight_guest;
-
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use alloc::{format, vec};
-use hyperlight_agents_common::{
-    constants, Annotations, Role, Tool, ToolAnnotations, ToolInputSchema,
-};
-use hyperlight_common::flatbuffer_wrappers::function_call::FunctionCall;
-use hyperlight_common::flatbuffer_wrappers::function_types::{
-    ParameterType, ParameterValue, ReturnType,
-};
-use hyperlight_common::flatbuffer_wrappers::guest_error::ErrorCode;
-use hyperlight_common::flatbuffer_wrappers::util::get_flatbuffer_result;
-use hyperlight_guest::error::{HyperlightGuestError, Result};
-use hyperlight_guest_bin::guest_function::definition::GuestFunctionDefinition;
-use hyperlight_guest_bin::guest_function::register::register_function;
-use hyperlight_guest_bin::host_comm::call_host_function;
+use alloc::{format};
 use regex::Regex;
-use strum_macros::AsRefStr;
+use hyperlight_agents_guest_common::prelude::*;
+use hyperlight_agents_common::structs::agent_message::AgentMessage;
 
-#[derive(Debug, PartialEq, AsRefStr)]
-enum AgentConstants {
-    ProcessHttpResponse,
-}
-
-fn send_message_to_host_method(
-    method_name: &str,
-    guest_message: &str,
-    message: &str,
-    callback_function: &str,
-) -> Result<Vec<u8>> {
-    let message = format!("{}{}", guest_message, message);
-
-    let _res = call_host_function::<String>(
-        method_name,
-        Some(Vec::from(&[
-            ParameterValue::String(message.to_string()),
-            ParameterValue::String(callback_function.to_string()),
-        ])),
-        ReturnType::String,
-    )?;
-
-    Ok(get_flatbuffer_result("Success"))
-}
+pub const PROCESS_HTTP_RESPONSE: &str = "ProcessHttpResponse";
 
 pub fn find_title_links<'a>(html: &'a str) -> Vec<(&'a str, &'a str)> {
     let re = Regex::new(r#"<span class="titleline"><a href="([^"]+)">([^<]+)</a>"#).unwrap();
@@ -69,12 +32,13 @@ fn process_http_response(function_call: &FunctionCall) -> Result<Vec<u8>> {
             for (i, (url, title)) in title_links.iter().enumerate() {
                 result.push_str(&format!("{}. {} - {}\n", i + 1, title, url));
             }
-            return send_message_to_host_method(
-                constants::HostMethod::FinalResult.as_ref(),
-                &result,
-                "",
-                "",
-            );
+            let message = AgentMessage {
+                callback: None,
+                message: Some(result),
+                guest_message: None,
+                is_success: true,
+            };
+            return send_message_to_host_method(constants::HostMethod::FinalResult.as_ref(), message);
         }
     }
     Err(HyperlightGuestError::new(
@@ -86,11 +50,14 @@ fn process_http_response(function_call: &FunctionCall) -> Result<Vec<u8>> {
 fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
     // For now, just trigger the HTTP fetch
     let _params = function_call.parameters.as_ref();
+    let message = AgentMessage {
+        callback: Some(PROCESS_HTTP_RESPONSE.to_string()),
+        message: Some("https://news.ycombinator.com/".to_string()),
+        guest_message: None,
+        is_success: true,
+    };
     send_message_to_host_method(
-        constants::HostMethod::FetchData.as_ref(),
-        "https://news.ycombinator.com/",
-        "",
-        AgentConstants::ProcessHttpResponse.as_ref(),
+        constants::HostMethod::FetchData.as_ref(), message
     )
 }
 
@@ -111,35 +78,27 @@ fn get_mcp_tool(_function_call: &FunctionCall) -> Result<Vec<u8>> {
 
 #[no_mangle]
 pub extern "C" fn hyperlight_main() {
-    // Register the main run function
-    register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::Run.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
-        ReturnType::String,
-        guest_run as usize,
-    ));
-
-    // Register metadata functions - these should not take parameters
-    register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::GetMCPTool.as_ref().to_string(),
-        Vec::new(),
-        ReturnType::String,
-        get_mcp_tool as usize,
-    ));
-
-    // Register callback function
-    register_function(GuestFunctionDefinition::new(
-        AgentConstants::ProcessHttpResponse.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
+    register_guest_function(
+        PROCESS_HTTP_RESPONSE,
+        &[ParameterType::String],
         ReturnType::String,
         process_http_response as usize,
-    ));
+    );
+    register_guest_function(
+        constants::GuestMethod::Run.as_ref(),
+        &[ParameterType::String],
+        ReturnType::String,
+        guest_run as usize,
+    );
+    register_guest_function(
+        constants::GuestMethod::GetMCPTool.as_ref(),
+        &[],
+        ReturnType::String,
+        get_mcp_tool as usize,
+    );
 }
 
 #[no_mangle]
 pub fn guest_dispatch_function(function_call: FunctionCall) -> Result<Vec<u8>> {
-    Err(HyperlightGuestError::new(
-        ErrorCode::GuestFunctionNotFound,
-        function_call.function_name.clone(),
-    ))
+    hyperlight_agents_guest_common::default_guest_dispatch_function(function_call)
 }

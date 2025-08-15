@@ -1,15 +1,16 @@
 [package]
-name = "hyperlight-agents-guest"
+name = "hyperlight-agents-guest-common"
 version = "0.1.0"
 edition = "2021"
 
 [workspace]
 
 [dependencies]
+hyperlight-guest = { version = "0.8.0" }
+hyperlight-guest-bin = { version = "0.8.0" }
+hyperlight-common = { version = "0.8.0", default-features = false }
 hyperlight-agents-common = { path = "../hyperlight_agents_common", version = "0.1.0" }
-hyperlight-agents-guest-common = { path = "../guest-common", version = "0.1.0" }
 
-regex = { version = "1.11.1", default-features = false }
 strum = { version = "0.27", default-features = false, features = ["derive"] }
 strum_macros = "0.27"
 serde = { version = "1.0", default-features = false, features = [

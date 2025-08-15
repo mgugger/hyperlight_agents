@@ -12,7 +12,6 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 pub struct MyClientHandler;
@@ -319,7 +318,7 @@ async fn integration_test() {
         res
     );
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     // // // check caddy process is spawned
     let command = "ps aux";

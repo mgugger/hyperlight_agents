@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use hyperlight_agents_common::structs::agent_message::AgentMessage;
 use hyperlight_host::sandbox::SandboxConfiguration;
 use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
 //use opentelemetry::global::{self};
@@ -91,7 +92,10 @@ pub fn register_host_functions(
 
     sandbox.register_with_extra_allowed_syscalls(
         constants::HostMethod::FetchData.as_ref(),
-        move |url: String, callback_name: String| {
+        move |agent_message_serialized: String| {
+            let agent_message: AgentMessage = serde_json::from_str(&agent_message_serialized).unwrap();
+            let callback_name = agent_message.callback.clone().unwrap_or_default();
+            let url = agent_message.message.clone().unwrap_or_default();
             let client = http_client_clone.clone();
             let sender = tx_clone.clone();
 
@@ -131,8 +135,10 @@ pub fn register_host_functions(
 
     sandbox.register_with_extra_allowed_syscalls(
         constants::HostMethod::FinalResult.as_ref(),
-        move |answer: String, _param: String| {
-            log::debug!("Finalresult called for agent {}", agent_id_clone);
+        move |agent_message_serialized: String| {
+            let agent_message: AgentMessage = serde_json::from_str(&agent_message_serialized).unwrap();
+            let message = agent_message.message.unwrap_or_default();
+            log::debug!("FinalResult called for agent {} with answer: '{}', param: '{}'", agent_id_clone, agent_message.guest_message.unwrap_or_default(), message);
 
             // Look up the request ID for this agent
             let request_id = {
@@ -143,16 +149,27 @@ pub fn register_host_functions(
                 }
             };
 
+            log::debug!("FinalResult: found request_id: {:?} for agent {}", request_id, agent_id_clone);
+
             // If we found a request ID, send the answer
             if let Some(request_id) = request_id {
                 if let Ok(mut channels) = MCP_RESPONSE_CHANNELS.lock() {
                     if let Some(tx) = channels.remove(&request_id) {
-                        let _ = tx.send(answer);
+                        match tx.send(message.clone()) {
+                            Ok(_) => log::debug!("FinalResult: Successfully sent answer to MCP channel"),
+                            Err(e) => log::error!("FinalResult: Failed to send answer to MCP channel: {}", e),
+                        }
+                    } else {
+                        log::warn!("FinalResult: No response channel found for request_id: {}", request_id);
                     }
+                } else {
+                    log::error!("FinalResult: Failed to lock MCP_RESPONSE_CHANNELS");
                 }
+            } else {
+                log::warn!("FinalResult: No request_id found for agent {}", agent_id_clone);
             }
 
-            Ok(())
+            Ok(message)
         },
         all_syscalls.clone(),
     )?;

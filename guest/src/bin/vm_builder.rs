@@ -2,159 +2,115 @@
 #![no_main]
 
 extern crate alloc;
-
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
-use hyperlight_agents_common::{constants, Tool, ToolInputSchema};
-use hyperlight_common::flatbuffer_wrappers::function_call::FunctionCall;
-use hyperlight_common::flatbuffer_wrappers::function_types::{
-    ParameterType, ParameterValue, ReturnType,
-};
-use hyperlight_common::flatbuffer_wrappers::guest_error::ErrorCode;
-use hyperlight_common::flatbuffer_wrappers::util::get_flatbuffer_result;
-use hyperlight_guest::error::{HyperlightGuestError, Result};
-use hyperlight_guest_bin::guest_function::definition::GuestFunctionDefinition;
-use hyperlight_guest_bin::guest_function::register::register_function;
-use hyperlight_guest_bin::host_comm::call_host_function;
+use hyperlight_agents_common::structs::agent_message::AgentMessage;
+use hyperlight_agents_guest_common::prelude::*;
+use serde::Deserialize;
 use serde_json::{Map, Value};
-use strum_macros::AsRefStr;
 
-#[derive(Debug, PartialEq, AsRefStr)]
-enum AgentConstants {
-    ProcessVmCreationResult,
-    ProcessVmCommandResult,
-    ProcessVmDestructionResult,
-    ProcessVmListResult,
-}
+pub const PROCESS_VM_CREATION_RESULT: &str = "ProcessVmCreationResult";
+pub const PROCESS_VM_COMMAND_RESULT: &str = "ProcessVmCommandResult";
+pub const PROCESS_VM_DESTRUCTION_RESULT: &str = "ProcessVmDestructionResult";
+pub const PROCESS_VM_LIST_RESULT: &str = "ProcessVmListResult";
 
-fn parse_json_param(json: &str, key: &str) -> Option<alloc::string::String> {
-    let pattern = format!("\"{}\":\"", key);
-    if let Some(start) = json.find(&pattern) {
-        let start = start + pattern.len();
-        if let Some(end) = json[start..].find("\"") {
-            Some(json[start..start + end].to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    }
+pub const PARAM_ACTION: &str = "action";
+pub const PARAM_VM_ID: &str = "vm_id";
+pub const PARAM_COMMAND: &str = "command";
+
+#[derive(Deserialize, Debug)]
+struct VmActionParams {
+    #[serde(rename = "action")]
+    action: String,
+    #[serde(rename = "vm_id")]
+    vm_id: Option<String>,
+    #[serde(rename = "command")]
+    command: Option<String>,
 }
 
 fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
-    if let Some(parameters) = &function_call.parameters {
-        if let Some(ParameterValue::String(json_params)) = parameters.get(0) {
-            let action =
-                parse_json_param(json_params, "action").unwrap_or_else(|| "create_vm".to_string());
-            let vm_id =
-                parse_json_param(json_params, "vm_id").unwrap_or_else(|| "default_vm".to_string());
-            let command =
-                parse_json_param(json_params, "command").unwrap_or_else(|| "".to_string());
-
-            let res: Result<String> = match action.as_str() {
-                "create_vm" => {
-                    let params = vec![
+    match function_call.parameters.as_ref().and_then(|p| p.get(0)) {
+        Some(ParameterValue::String(json_params)) => {
+            let params: VmActionParams = match serde_json::from_str(json_params) {
+                Ok(p) => p,
+                Err(_) => {
+                    return Err(HyperlightGuestError::new(
+                        ErrorCode::GuestFunctionParameterTypeMismatch,
+                        "Failed to parse VM action parameters".to_string(),
+                    ))
+                }
+            };
+            let action = params.action;
+            let vm_id = params.vm_id.unwrap_or_else(|| "default_vm".to_string());
+            let command = params.command.unwrap_or_default();
+            let res = match action.as_str() {
+                "create_vm" => call_host_function::<String>(
+                    constants::HostMethod::CreateVM.as_ref(),
+                    Some(vec![
                         ParameterValue::String(vm_id),
-                        ParameterValue::String(
-                            AgentConstants::ProcessVmCreationResult.as_ref().to_string(),
-                        ),
-                    ];
-                    call_host_function::<String>(
-                        constants::HostMethod::CreateVM.as_ref(),
-                        Some(params),
-                        ReturnType::String,
-                    )
-                },
-                "execute_vm_command" => {
-                    let params = vec![
+                        ParameterValue::String(PROCESS_VM_CREATION_RESULT.to_string()),
+                    ]),
+                    ReturnType::String,
+                ),
+                "execute_vm_command" => call_host_function::<String>(
+                    constants::HostMethod::ExecuteVMCommand.as_ref(),
+                    Some(vec![
+                        ParameterValue::String(vm_id.clone()),
+                        ParameterValue::String(command.clone()),
+                        ParameterValue::String(PROCESS_VM_COMMAND_RESULT.to_string()),
+                    ]),
+                    ReturnType::String,
+                ),
+                "spawn_command" => call_host_function::<String>(
+                    constants::HostMethod::SpawnCommand.as_ref(),
+                    Some(vec![
+                        ParameterValue::String(vm_id.clone()),
+                        ParameterValue::String(command.clone()),
+                        ParameterValue::String(PROCESS_VM_COMMAND_RESULT.to_string()),
+                    ]),
+                    ReturnType::String,
+                ),
+                "list_spawned_processes" => call_host_function::<String>(
+                    constants::HostMethod::ListSpawnedProcesses.as_ref(),
+                    Some(vec![
+                        ParameterValue::String(vm_id.clone()),
+                        ParameterValue::String(PROCESS_VM_LIST_RESULT.to_string()),
+                    ]),
+                    ReturnType::String,
+                ),
+                "stop_spawned_process" => call_host_function::<String>(
+                    constants::HostMethod::StopSpawnedProcess.as_ref(),
+                    Some(vec![
+                        ParameterValue::String(vm_id.clone()),
+                        ParameterValue::String(command.clone()),
+                        ParameterValue::String(PROCESS_VM_COMMAND_RESULT.to_string()),
+                    ]),
+                    ReturnType::String,
+                ),
+                "destroy_vm" => call_host_function::<String>(
+                    constants::HostMethod::DestroyVM.as_ref(),
+                    Some(vec![
                         ParameterValue::String(vm_id),
-                        ParameterValue::String(command),
-                        ParameterValue::String(
-                            AgentConstants::ProcessVmCommandResult.as_ref().to_string(),
-                        ),
-                    ];
-                    call_host_function::<String>(
-                        constants::HostMethod::ExecuteVMCommand.as_ref(),
-                        Some(params),
-                        ReturnType::String,
-                    )
-                },
-                "spawn_command" => {
-                    let params = vec![
-                        ParameterValue::String(vm_id),
-                        ParameterValue::String(command),
-                        ParameterValue::String(
-                            AgentConstants::ProcessVmCommandResult.as_ref().to_string(),
-                        ),
-                    ];
-                    call_host_function::<String>(
-                        constants::HostMethod::SpawnCommand.as_ref(),
-                        Some(params),
-                        ReturnType::String,
-                    )
-                },
-                "list_spawned_processes" => {
-                    let params = vec![
-                        ParameterValue::String(vm_id),
-                        ParameterValue::String(
-                            AgentConstants::ProcessVmListResult.as_ref().to_string(),
-                        ),
-                    ];
-                    call_host_function::<String>(
-                        constants::HostMethod::ListSpawnedProcesses.as_ref(),
-                        Some(params),
-                        ReturnType::String,
-                    )
-                },
-                "stop_spawned_process" => {
-                    let params = vec![
-                        ParameterValue::String(vm_id),
-                        ParameterValue::String(command), // command here is process_id
-                        ParameterValue::String(
-                            AgentConstants::ProcessVmCommandResult.as_ref().to_string(),
-                        ),
-                    ];
-                    call_host_function::<String>(
-                        constants::HostMethod::StopSpawnedProcess.as_ref(),
-                        Some(params),
-                        ReturnType::String,
-                    )
-                },
-                "destroy_vm" => {
-                    let params = vec![
-                        ParameterValue::String(vm_id),
-                        ParameterValue::String(
-                            AgentConstants::ProcessVmDestructionResult.as_ref().to_string(),
-                        )
-                    ];
-                    call_host_function::<String>(
-                        constants::HostMethod::DestroyVM.as_ref(),
-                        Some(params),
-                        ReturnType::String,
-                    )
-                },
-                "list_vms" => {
-                    let params = vec![
+                        ParameterValue::String(PROCESS_VM_DESTRUCTION_RESULT.to_string()),
+                    ]),
+                    ReturnType::String,
+                ),
+                "list_vms" => call_host_function::<String>(
+                    constants::HostMethod::ListVMs.as_ref(),
+                    Some(vec![
                         ParameterValue::String("".to_string()),
-                        ParameterValue::String(
-                            AgentConstants::ProcessVmListResult.as_ref().to_string(),
-                        )
-                    ];
-                    call_host_function::<String>(
-                        constants::HostMethod::ListVMs.as_ref(),
-                        Some(params),
-                        ReturnType::String
-                    )
-                },
+                        ParameterValue::String(PROCESS_VM_LIST_RESULT.to_string()),
+                    ]),
+                    ReturnType::String,
+                ),
                 _ => return Err(HyperlightGuestError::new(
                     ErrorCode::GuestFunctionParameterTypeMismatch,
-                    format!("VM action invalid, must be one of: create_vm, execute_vm_command, spawn_command, list_spawned_processes, stop_spawned_process, destroy_vm, list_vms. Got {:?}", action).to_string(),
+                    format!("VM action invalid, must be one of: create_vm, execute_vm_command, spawn_command, list_spawned_processes, stop_spawned_process, destroy_vm, list_vms. Got {:?}", action),
                 )),
             };
-
             match res {
                 Ok(response) => Ok(get_flatbuffer_result(
                     format!("VM operation OK: {:?} - {}", action, response).as_str(),
@@ -163,17 +119,11 @@ fn guest_run(function_call: &FunctionCall) -> Result<Vec<u8>> {
                     format!("VM operation failed {:?}", e).as_str(),
                 )),
             }
-        } else {
-            Err(HyperlightGuestError::new(
-                ErrorCode::GuestFunctionParameterTypeMismatch,
-                "VM action invalid, expected string parameter".to_string(),
-            ))
         }
-    } else {
-        Err(HyperlightGuestError::new(
+        _ => Err(HyperlightGuestError::new(
             ErrorCode::GuestFunctionParameterTypeMismatch,
-            "VM action invalid, no parameters provided".to_string(),
-        ))
+            "VM action invalid, expected string parameter".to_string(),
+        )),
     }
 }
 
@@ -183,7 +133,7 @@ fn get_mcp_tool(_function_call: &FunctionCall) -> Result<Vec<u8>> {
     let mut action_schema = Map::new();
     action_schema.insert("type".to_string(), Value::String("string".to_string()));
     action_schema.insert("description".to_string(), Value::String("Action to perform, must be one of: create_vm, execute_vm_command, spawn_command, list_spawned_processes, stop_spawned_process, destroy_vm, list_vms".to_string()));
-    params.insert("action".to_string(), action_schema);
+    params.insert(PARAM_ACTION.to_string(), action_schema);
 
     let mut vm_id_schema = Map::new();
     vm_id_schema.insert("type".to_string(), Value::String("string".to_string()));
@@ -191,14 +141,14 @@ fn get_mcp_tool(_function_call: &FunctionCall) -> Result<Vec<u8>> {
         "description".to_string(),
         Value::String("ID of the VM to operate on".to_string()),
     );
-    params.insert("vm_id".to_string(), vm_id_schema);
+    params.insert(PARAM_VM_ID.to_string(), vm_id_schema);
 
     let mut command_schema = Map::new();
     command_schema.insert("type".to_string(), Value::String("string".to_string()));
     command_schema.insert("description".to_string(), Value::String("Command to execute in the VM, arguments for spawn_command, or process_id for stop_spawned_process".to_string()));
-    params.insert("command".to_string(), command_schema);
+    params.insert(PARAM_COMMAND.to_string(), command_schema);
 
-    let required = vec!["action".to_string(), "vm_id".to_string()];
+    let required = vec![PARAM_ACTION.to_string(), PARAM_VM_ID.to_string()];
 
     let tool = Tool {
         name: "VmBuilder".to_string(),
@@ -216,151 +166,88 @@ fn get_mcp_tool(_function_call: &FunctionCall) -> Result<Vec<u8>> {
     Ok(get_flatbuffer_result(serialized.as_str()))
 }
 
-fn send_message_to_host_method(
-    method_name: &str,
-    guest_message: &str,
-    message: &str,
-    callback_function: &str,
-) -> Result<Vec<u8>> {
-    let message = format!("{}{}", guest_message, message);
-
-    let _res = call_host_function::<()>(
-        method_name,
-        Some(Vec::from(&[
-            ParameterValue::String(message.to_string()),
-            ParameterValue::String(callback_function.to_string()),
-        ])),
-        ReturnType::Void,
-    )?;
-
-    Ok(get_flatbuffer_result("Success"))
+fn process_result(function_call: &FunctionCall, label: &str) -> Result<Vec<u8>> {
+    match function_call.parameters.as_ref().and_then(|p| p.get(0)) {
+        Some(ParameterValue::String(response)) => {
+            let message = AgentMessage {
+                callback: None,
+                message: Some(response.clone()),
+                guest_message: Some(label.to_string()),
+                is_success: true,
+            };
+            send_message_to_host_method(constants::HostMethod::FinalResult.as_ref(), message)
+        }
+        _ => Ok(get_flatbuffer_result(format!("{label} processed").as_str())),
+    }
 }
 
 fn process_vm_creation_result(function_call: &FunctionCall) -> Result<Vec<u8>> {
-    if let Some(parameters) = &function_call.parameters {
-        if parameters.len() > 0 {
-            if let Some(param) = parameters.get(0) {
-                if let ParameterValue::String(response) = param {
-                    let result_message = format!("VM Creation Result: {}", response);
-                    return send_message_to_host_method(
-                        constants::HostMethod::FinalResult.as_ref(),
-                        result_message.as_str(),
-                        "",
-                        "",
-                    );
-                }
-            }
-        }
-    }
-    Ok(get_flatbuffer_result("VM creation result processed"))
+    process_result(function_call, "VM Creation Result")
 }
-
 fn process_vm_command_result(function_call: &FunctionCall) -> Result<Vec<u8>> {
-    if let Some(parameters) = &function_call.parameters {
-        if parameters.len() > 0 {
-            if let Some(param) = parameters.get(0) {
-                if let ParameterValue::String(response) = param {
-                    let result_message = format!("{}", response);
-                    return send_message_to_host_method(
-                        constants::HostMethod::FinalResult.as_ref(),
-                        result_message.as_str(),
-                        "",
-                        "",
-                    );
-                }
-            }
-        }
-    }
-    Ok(get_flatbuffer_result("VM command result processed"))
+    process_result(function_call, "VM Command Result")
 }
-
 fn process_vm_destruction_result(function_call: &FunctionCall) -> Result<Vec<u8>> {
-    if let Some(parameters) = &function_call.parameters {
-        if parameters.len() > 0 {
-            if let Some(param) = parameters.get(0) {
-                if let ParameterValue::String(response) = param {
-                    let result_message = format!("VM Destruction Result: {}", response);
-                    return send_message_to_host_method(
-                        constants::HostMethod::FinalResult.as_ref(),
-                        result_message.as_str(),
-                        "",
-                        "",
-                    );
-                }
-            }
-        }
-    }
-    Ok(get_flatbuffer_result("VM destruction result processed"))
+    process_result(function_call, "VM Destruction Result")
 }
 
 fn process_vm_list_result(function_call: &FunctionCall) -> Result<Vec<u8>> {
-    if let Some(parameters) = &function_call.parameters {
-        if parameters.len() > 0 {
-            let result_message = format!("Available VMs: {:?}", parameters);
-            return send_message_to_host_method(
-                constants::HostMethod::FinalResult.as_ref(),
-                result_message.as_str(),
-                "",
-                "",
-            );
-        }
+    // For list, show all parameters
+    if let Some(parameters) = function_call.parameters.as_ref() {
+        let result_message = format!("Available VMs: {:?}", parameters);
+        let message = AgentMessage {
+            callback: None,
+            message: Some(result_message),
+            guest_message: None,
+            is_success: true,
+        };
+        return send_message_to_host_method(constants::HostMethod::FinalResult.as_ref(), message);
     }
     Ok(get_flatbuffer_result("VM list result processed"))
 }
 
 #[no_mangle]
 pub extern "C" fn hyperlight_main() {
-    // Register the main run function
-    register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::Run.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
+    register_guest_function(
+        constants::GuestMethod::Run.as_ref(),
+        &[ParameterType::String],
         ReturnType::String,
         guest_run as usize,
-    ));
-
-    register_function(GuestFunctionDefinition::new(
-        constants::GuestMethod::GetMCPTool.as_ref().to_string(),
-        Vec::new(),
+    );
+    register_guest_function(
+        constants::GuestMethod::GetMCPTool.as_ref(),
+        &[],
         ReturnType::String,
         get_mcp_tool as usize,
-    ));
-
+    );
     // Register callback functions
-    register_function(GuestFunctionDefinition::new(
-        AgentConstants::ProcessVmCreationResult.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
+    register_guest_function(
+        PROCESS_VM_CREATION_RESULT,
+        &[ParameterType::String],
         ReturnType::String,
         process_vm_creation_result as usize,
-    ));
-
-    register_function(GuestFunctionDefinition::new(
-        AgentConstants::ProcessVmCommandResult.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
+    );
+    register_guest_function(
+        PROCESS_VM_COMMAND_RESULT,
+        &[ParameterType::String],
         ReturnType::String,
         process_vm_command_result as usize,
-    ));
-
-    register_function(GuestFunctionDefinition::new(
-        AgentConstants::ProcessVmDestructionResult
-            .as_ref()
-            .to_string(),
-        Vec::from(&[ParameterType::String]),
+    );
+    register_guest_function(
+        PROCESS_VM_DESTRUCTION_RESULT,
+        &[ParameterType::String],
         ReturnType::String,
         process_vm_destruction_result as usize,
-    ));
-
-    register_function(GuestFunctionDefinition::new(
-        AgentConstants::ProcessVmListResult.as_ref().to_string(),
-        Vec::from(&[ParameterType::String]),
+    );
+    register_guest_function(
+        PROCESS_VM_LIST_RESULT,
+        &[ParameterType::String],
         ReturnType::String,
         process_vm_list_result as usize,
-    ));
+    );
 }
 
 #[no_mangle]
 pub fn guest_dispatch_function(function_call: FunctionCall) -> Result<Vec<u8>> {
-    Err(HyperlightGuestError::new(
-        ErrorCode::GuestFunctionNotFound,
-        function_call.function_name.clone(),
-    ))
+    hyperlight_agents_guest_common::default_guest_dispatch_function(function_call)
 }
