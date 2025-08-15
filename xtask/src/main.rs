@@ -8,7 +8,6 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
-use std::thread;
 use tar::Archive;
 use which::which;
 
@@ -41,9 +40,7 @@ enum Commands {
 }
 
 // Configuration
-const KERNEL_VERSION: &str = "5.10.223";
-const KERNEL_URL: &str =
-    "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.6/x86_64/vmlinux-5.10.223";
+const KERNEL_S3_INDEX_URL: &str = "http://spec.ccfc.min.s3.amazonaws.com/?prefix=firecracker-ci/&list-type=2";
 
 const FIRECRACKER_VERSION: &str = "v1.12.1";
 const FIRECRACKER_URL: &str = "https://github.com/firecracker-microvm/firecracker/releases/download/v1.12.1/firecracker-v1.12.1-x86_64.tgz";
@@ -76,7 +73,7 @@ impl Paths {
             vm_agent_manifest_path,
             vm_images_dir: vm_images_dir.clone(),
             firecracker_dir: firecracker_dir.clone(),
-            kernel_path: vm_images_dir.join(format!("vmlinux-{}", KERNEL_VERSION)),
+            kernel_path: vm_images_dir.join("vmlinux"),
             rootfs_path: vm_images_dir.join("rootfs.squashfs"),
             firecracker_binary: firecracker_dir.join("firecracker"),
         })
@@ -129,7 +126,7 @@ async fn run_all(paths: &Paths) -> Result<()> {
     }
 
     log::info!("\n{}", "6. Checking firecracker binary...".bright_cyan());
-    if !paths.firecracker_binary.exists() {
+    if !paths.firecracker_binary.exists() && which::which("firecracker").is_err() {
         log::info!("Firecracker not found, downloading...");
         download_firecracker(paths).await?;
     } else {
@@ -157,6 +154,9 @@ fn check_dependencies() -> Result<()> {
     }
     if which("sudo").is_err() {
         missing.push("sudo");
+    }
+        if which("mksquashfs").is_err() {
+        missing.push("mksquashfs");
     }
 
     let output = Command::new("rustup")
@@ -188,10 +188,10 @@ fn check_dependencies() -> Result<()> {
             log::info!("  - {}", dep);
         }
         log::info!("\nOn Ubuntu/Debian:");
-        log::info!("  sudo apt update && sudo apt install coreutils e2fsprogs sudo");
+        log::info!("  sudo apt update && sudo apt install coreutils e2fsprogs sudo squashfs-tools");
         log::info!("\nOn Fedora/RHEL:");
         log::info!("  sudo dnf install coreutils e2fsprogs sudo");
-        return Err(anyhow!("Missing dependencies"));
+        return Err(anyhow!("Missing dependencies: {:?}", missing));
     }
 
     Ok(())
@@ -395,16 +395,32 @@ fn build_base_rootfs(paths: &Paths) -> Result<()> {
 }
 
 async fn download_kernel(paths: &Paths) -> Result<()> {
-    log::info!("Downloading kernel binary...");
+    use regex::Regex;
+    log::info!("Fetching latest available kernel from S3 index...");
     fs::create_dir_all(&paths.vm_images_dir)?;
-    let response = reqwest::get(KERNEL_URL).await?;
-    if !response.status().is_success() {
-        return Err(anyhow!(
-            "Failed to download kernel: HTTP {}",
-            response.status()
-        ));
+    let index_resp = reqwest::get(KERNEL_S3_INDEX_URL).await?;
+    if !index_resp.status().is_success() {
+        return Err(anyhow!("Failed to fetch S3 index: HTTP {}", index_resp.status()));
     }
-    let mut file = File::create(&paths.kernel_path)?;
+    let index_xml = index_resp.text().await?;
+    // Match all vmlinux-5.10.xxx files for x86_64, regardless of version string (e.g. v1.10-2404)
+    let re = Regex::new(r"firecracker-ci/v[^d-]+-+[^d]+/x86_64/vmlinux-5.10.\d{3}").unwrap();
+    let mut latest = None;
+    for cap in re.captures_iter(&index_xml) {
+        let candidate = &cap[0];
+        if latest.as_ref().map_or(true, |l: &String| *candidate > **l) {
+            latest = Some(candidate.to_string());
+        }
+    }
+    let latest = latest.ok_or_else(|| anyhow!("No kernel found in S3 index"))?;
+    let kernel_url = format!("https://s3.amazonaws.com/spec.ccfc.min/{}", latest);
+    log::info!("Downloading latest kernel from {}", kernel_url);
+    let response = reqwest::get(&kernel_url).await?;
+    if !response.status().is_success() {
+        return Err(anyhow!("Failed to download kernel: HTTP {}", response.status()));
+    }
+    let kernel_path = paths.vm_images_dir.join(latest.split('/').last().unwrap());
+    let mut file = File::create(&kernel_path)?;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         file.write_all(&chunk?)?;
@@ -412,15 +428,13 @@ async fn download_kernel(paths: &Paths) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&paths.kernel_path)?.permissions();
+        let mut perms = fs::metadata(&kernel_path)?.permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&paths.kernel_path, perms)?;
+        fs::set_permissions(&kernel_path, perms)?;
     }
-
     // Rename to vmlinux (without version suffix)
     let final_kernel_path = paths.vm_images_dir.join("vmlinux");
-    fs::rename(&paths.kernel_path, &final_kernel_path)?;
-
+    fs::rename(&kernel_path, &final_kernel_path)?;
     log::info!(
         "{} Kernel downloaded and renamed to {}",
         "✓".bright_green(),

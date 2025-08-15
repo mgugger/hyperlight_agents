@@ -94,9 +94,9 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-common"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6b9232222e023b84c7c10bdb67327f503567a1a5ff68db935683af0147d73ba"
+checksum = "52423b32cefb31363194a332da0ed440c550407a8c2f2acf1c837e77b09cc06c"
 dependencies = [
  "anyhow",
  "flatbuffers",
@@ -106,20 +106,21 @@ dependencies = [
 
 [[package]]
 name = "hyperlight-guest"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e9f007acee89f791a645acd7ae517190bd2bd2e4e24ede531e8d9b70c898c65"
+checksum = "afa8cf088e745392262a57e344a1b08dabf79d72bfd90508e5f6e60290228141"
 dependencies = [
  "anyhow",
  "hyperlight-common",
+ "hyperlight-guest-tracing",
  "serde_json",
 ]
 
 [[package]]
 name = "hyperlight-guest-bin"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e125eb8b36a7f8909c8efea4e37ebb5306307fc3e20a0d2b533a40441785e34"
+checksum = "6fd6cd25eaa0cbc22c67adae0c25d402409480eca9a184708b7de20e88c09e0a"
 dependencies = [
  "buddy_system_allocator",
  "cc",
@@ -127,8 +128,31 @@ dependencies = [
  "glob",
  "hyperlight-common",
  "hyperlight-guest",
+ "hyperlight-guest-tracing",
  "log",
  "spin 0.10.0",
+]
+
+[[package]]
+name = "hyperlight-guest-tracing"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79aea31011bf30126cbb1af667d53b344e8f39a0a0bd6d5e4d8f692ecd5151ab"
+dependencies = [
+ "hyperlight-common",
+ "hyperlight-guest-tracing-macro",
+ "spin 0.10.0",
+]
+
+[[package]]
+name = "hyperlight-guest-tracing-macro"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c57ab09dcec3021c972eefa4046c5ae4b06cfc777c673bbc6af773a066a28f4f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -315,9 +339,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.100"
+version = "2.0.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b09a44accad81e1ba1cd74a32461ba89dee89095ba17b32f5d03683b1b1fc2a0"
+checksum = "7bc3fcb250e53458e712715cf74285c1f889686520d79294a9ef3bd7aa1fc619"
 dependencies = [
  "proc-macro2",
  "quote",

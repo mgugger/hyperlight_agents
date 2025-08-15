@@ -55,7 +55,13 @@ pub struct VmManager {
 
 impl VmManager {
     pub fn new() -> Self {
-        let firecracker_available = Command::new("firecracker/firecracker")
+        let firecracker_path = if which::which("firecracker").is_ok() {
+            "firecracker"
+        } else {
+            "firecracker/firecracker"
+        };
+
+        let firecracker_available = Command::new(firecracker_path)
             .arg("--version")
             .output()
             .is_ok();

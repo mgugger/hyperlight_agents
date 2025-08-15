@@ -3,8 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hyperlight_host::sandbox::SandboxConfiguration;
-use hyperlight_host::sandbox_state::sandbox::EvolvableSandbox;
-use hyperlight_host::sandbox_state::transition::Noop;
 use hyperlight_host::{MultiUseSandbox, UninitializedSandbox};
 //use opentelemetry::global::{self};
 //use opentelemetry::trace::{Span, TraceContextExt, Tracer};
@@ -58,10 +56,10 @@ pub fn create_agent(
     )?;
 
     // Initialize the sandbox
-    let mut sandbox = uninitialized_sandbox.evolve(Noop::default())?;
+    let mut sandbox = uninitialized_sandbox.evolve()?;
 
     let mcp_tool = sandbox
-        .call_guest_function_by_name::<String>(constants::GuestMethod::GetMCPTool.as_ref(), ())
+        .call::<String>(constants::GuestMethod::GetMCPTool.as_ref(), ())
         .unwrap();
 
     let mcp_tool_deserialized: Tool = serde_json::from_str(&mcp_tool)?;

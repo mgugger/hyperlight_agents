@@ -2,18 +2,11 @@
 # Default target for the workspace
 # target = "x86_64-unknown-linux-gnu"  # Commented out to use system default
 
-# Alias configurations for common commands
 [alias]
-# Build all components in the correct order
 build-all = "build --workspace"
-
-# Build for release
+xtask = "run --package xtask --"
 build-release = "build --workspace --release"
-
-# Build all except vm-agent (for quick iteration)
 build-main = "build -p hyperlight-agents-common -p hyperlight-agents-host"
-
-# Run the host application
 run-host = "run -p hyperlight-agents-host"
 
 # Clean all

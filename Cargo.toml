@@ -6,10 +6,10 @@ default-members = ["hyperlight_agents_common", "host", "xtask"]
 
 # Default dependency versions for the workspace
 [workspace.dependencies]
-hyperlight-host = { version = "0.7.0", features = ["kvm", "seccomp"] }
-hyperlight-guest = { version = "0.7.0" }
-hyperlight-guest-bin = { version = "0.7.0" }
-hyperlight-common = { version = "0.7.0", default-features = false }
+hyperlight-host = { version = "0.8.0", features = ["kvm", "seccomp"] }
+hyperlight-guest = { version = "0.8.0" }
+hyperlight-guest-bin = { version = "0.8.0" }
+hyperlight-common = { version = "0.8.0", default-features = false }
 hyperlight-agents-common = { path = "./hyperlight_agents_common", version = "0.1.0" }
 
 serde = { version = "1.0", default-features = false, features = [
@@ -46,7 +46,3 @@ build-order = ["hyperlight_agents_common", "host"]
 [workspace.metadata.vm-agent]
 target = "x86_64-unknown-linux-musl"
 profile = "release"
-
-# Note: For convenient aliases, you can create a .cargo/config.toml in your home directory:
-# [alias]
-# x = "run -p xtask --"

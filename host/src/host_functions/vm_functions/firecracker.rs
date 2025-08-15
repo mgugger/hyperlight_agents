@@ -103,7 +103,13 @@ pub(crate) fn start_firecracker_vm(
     std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
 
     let devnull = File::create("/dev/null")?;
-    let mut cmd = Command::new("firecracker/firecracker");
+    // Prefer system firecracker if available, else fallback to local binary
+    let firecracker_bin = if which::which("firecracker").is_ok() {
+        "firecracker"
+    } else {
+        "firecracker/firecracker"
+    };
+    let mut cmd = Command::new(firecracker_bin);
     cmd.arg("--api-sock")
         .arg(format!("{}/firecracker.sock", vm_dir.display()))
         .arg("--config-file")
